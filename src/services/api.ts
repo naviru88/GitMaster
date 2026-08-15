@@ -13,7 +13,16 @@ export async function getProjects(): Promise<Project[]> {
   return handleResponse<Project[]>(response);
 }
 
-export async function createProject(data: ProjectInput): Promise<Project> {
+export async function createProject(data: {
+  githubUrl: string;
+  accessToken?: string;
+  repoData?: {
+    name: string;
+    html_url: string;
+    description: string | null;
+    stargazers_count: number;
+  };
+}): Promise<Project> {
   const response = await fetch('/api/projects', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

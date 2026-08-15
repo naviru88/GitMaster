@@ -70,6 +70,12 @@ export default function NewProjectDialog({ open, onOpenChange }: NewProjectDialo
       const project = await createProject({
         githubUrl: githubUrl.trim(),
         accessToken: accessToken.trim() || undefined,
+        repoData: {
+          name: (validatedRepo as Record<string, unknown>)?.name as string || '',
+          html_url: (validatedRepo as Record<string, unknown>)?.htmlUrl as string || githubUrl.trim(),
+          description: (validatedRepo as Record<string, unknown>)?.description as string | null || null,
+          stargazers_count: (validatedRepo as Record<string, unknown>)?.stars as number || 0,
+        },
       });
       addProject(project);
       setSelectedProject(project);
@@ -79,6 +85,7 @@ export default function NewProjectDialog({ open, onOpenChange }: NewProjectDialo
       toast.success('Project added successfully!');
       resetForm();
     } catch (err) {
+      setValidatedRepo(null);
       setError(err instanceof Error ? err.message : 'Failed to create project');
     } finally {
       setCreating(false);
@@ -150,14 +157,21 @@ export default function NewProjectDialog({ open, onOpenChange }: NewProjectDialo
             </p>
           </div>
 
-          {error && (
+          {error && !validatedRepo && (
             <p className="flex items-center gap-1.5 text-sm text-destructive">
               <AlertTriangle className="size-3.5" />
               {error}
             </p>
           )}
 
-          {validatedRepo && (
+          {error && validatedRepo && (
+            <div className="flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50/50 p-3 dark:border-amber-900/50 dark:bg-amber-950/20">
+              <AlertTriangle className="size-4 shrink-0 text-amber-500" />
+              <p className="text-sm text-amber-800 dark:text-amber-300">{error}</p>
+            </div>
+          )}
+
+          {validatedRepo && !error && (
             <>
               <Separator />
               <div className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-3 dark:border-emerald-900/50 dark:bg-emerald-950/20">

@@ -19,9 +19,15 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { githubUrl, accessToken } = body as {
+    const { githubUrl, accessToken, repoData } = body as {
       githubUrl: string;
       accessToken?: string;
+      repoData?: {
+        name: string;
+        html_url: string;
+        description: string | null;
+        stargazers_count: number;
+      };
     };
 
     if (!githubUrl) {
@@ -30,17 +36,27 @@ export async function POST(request: NextRequest) {
 
     const { owner, repo } = parseGitHubUrl(githubUrl);
 
-    const repoInfo = await validateRepo(owner, repo, accessToken);
+    // Use provided repo data (from prior validation) to avoid a second GitHub API call
+    let info = repoData;
+    if (!info) {
+      const repoInfo = await validateRepo(owner, repo, accessToken);
+      info = {
+        name: repoInfo.name,
+        html_url: repoInfo.html_url,
+        description: repoInfo.description,
+        stargazers_count: repoInfo.stargazers_count,
+      };
+    }
 
     const project = await db.project.create({
       data: {
-        name: repoInfo.name,
+        name: info.name,
         owner,
         repo,
-        githubUrl: repoInfo.html_url,
-        description: repoInfo.description,
+        githubUrl: info.html_url,
+        description: info.description,
         accessToken: accessToken || null,
-        stars: repoInfo.stargazers_count,
+        stars: info.stargazers_count,
       },
       include: { _count: { select: { changelogs: true } } },
     });

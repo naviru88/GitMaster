@@ -80,7 +80,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
 
       <Separator className="bg-gray-800" />
 
-      <div className="p-3">
+      <div className="shrink-0 p-3 pb-4">
         <Button
           onClick={handleNewProject}
           className="w-full justify-start gap-2 bg-emerald-600 text-white hover:bg-emerald-700"
@@ -195,7 +195,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen bg-background">
       {/* Desktop Sidebar */}
-      <aside className="hidden w-64 shrink-0 flex-col border-r border-gray-800 bg-gray-950 lg:flex">
+      <aside className="hidden h-screen w-64 shrink-0 flex-col border-r border-gray-800 bg-gray-950 lg:flex">
         <SidebarContent />
       </aside>
 
@@ -215,7 +215,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               <SheetHeader className="sr-only">
                 <SheetTitle>Navigation</SheetTitle>
               </SheetHeader>
-              <SidebarContent />
+              <div className="flex h-full flex-col">
+                <SidebarContent />
+              </div>
             </SheetContent>
           </Sheet>
 
