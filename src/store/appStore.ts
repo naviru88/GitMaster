@@ -3,9 +3,15 @@
    ============================================================ */
 
 import { create } from 'zustand';
-import type { AppView, RepoTab, Account, GitHubRepo, GitHubContent, GitHubBranch, GitHubCommit } from '@/types';
+import type { AppView, RepoTab, Account, GitHubRepo, GitHubContent, GitHubBranch, GitHubCommit, User } from '@/types';
 
 interface AppState {
+  // Auth
+  user: User | null;
+  setUser: (u: User | null) => void;
+  authLoading: boolean;
+  setAuthLoading: (l: boolean) => void;
+
   // Navigation
   view: AppView;
   setView: (v: AppView) => void;
@@ -51,12 +57,40 @@ interface AppState {
   // Loading states
   loading: boolean;
   setLoading: (l: boolean) => void;
+
+  // Reset all state (for logout)
+  resetAll: () => void;
 }
 
+const initialState = {
+  view: 'dashboard' as AppView,
+  accounts: [] as Account[],
+  selectedAccountId: null as string | null,
+  repos: [] as GitHubRepo[],
+  reposTotalCount: 0,
+  selectedRepo: null as GitHubRepo | null,
+  repoTab: 'files' as RepoTab,
+  selectedBranch: '',
+  filePath: '',
+  fileContents: [] as GitHubContent[],
+  openedFile: null as { content: GitHubContent; decoded: string } | null,
+  branches: [] as GitHubBranch[],
+  commits: [] as GitHubCommit[],
+  loading: false,
+};
+
 export const useAppStore = create<AppState>((set) => ({
+  // Auth
+  user: null,
+  setUser: (user) => set({ user }),
+  authLoading: true,
+  setAuthLoading: (authLoading) => set({ authLoading }),
+
+  // Navigation
   view: 'dashboard',
   setView: (view) => set({ view }),
 
+  // Accounts
   accounts: [],
   setAccounts: (accounts) => set({ accounts }),
   addAccount: (a) => set((s) => ({ accounts: [...s.accounts, a] })),
@@ -67,6 +101,7 @@ export const useAppStore = create<AppState>((set) => ({
   selectedAccountId: null,
   setSelectedAccountId: (selectedAccountId) => set({ selectedAccountId, repos: [], commits: [], branches: [], fileContents: [], openedFile: null, filePath: '' }),
 
+  // Repos
   repos: [],
   setRepos: (repos) => set({ repos }),
   reposTotalCount: 0,
@@ -83,6 +118,7 @@ export const useAppStore = create<AppState>((set) => ({
     branches: [],
   }),
 
+  // Repo detail
   repoTab: 'files',
   setRepoTab: (repoTab) => set({ repoTab }),
   selectedBranch: '',
@@ -94,6 +130,7 @@ export const useAppStore = create<AppState>((set) => ({
     view: 'repo-detail',
   }),
 
+  // File browser
   filePath: '',
   setFilePath: (filePath) => set({ filePath, fileContents: [], openedFile: null }),
   fileContents: [],
@@ -101,12 +138,22 @@ export const useAppStore = create<AppState>((set) => ({
   openedFile: null,
   setOpenedFile: (openedFile) => set({ openedFile, view: openedFile ? 'file-editor' : 'repo-detail' }),
 
+  // Branches
   branches: [],
   setBranches: (branches) => set({ branches }),
 
+  // Commits
   commits: [],
   setCommits: (commits) => set({ commits }),
 
+  // Loading states
   loading: false,
   setLoading: (loading) => set({ loading }),
+
+  // Reset all state (for logout)
+  resetAll: () => set({
+    ...initialState,
+    user: null,
+    authLoading: false,
+  }),
 }));

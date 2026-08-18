@@ -3,6 +3,7 @@
    ============================================================ */
 
 import type {
+  User,
   Account,
   AccountCreate,
   GitHubRepo,
@@ -51,6 +52,16 @@ async function put<T>(url: string, body?: unknown) {
 async function del<T>(url: string) {
   return handleResponse<T>(await fetch(`${BASE}${url}`, { method: 'DELETE' }));
 }
+
+// -------- Auth --------
+export const auth = {
+  register: (name: string, email: string, password: string) =>
+    post<User>('/auth/register', { name, email, password }),
+  login: (email: string, password: string) =>
+    post<User>('/auth/login', { email, password }),
+  me: () => get<User>('/auth/me'),
+  logout: () => post<{ success: boolean }>('/auth/logout'),
+};
 
 // -------- Accounts --------
 export const accounts = {

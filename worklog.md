@@ -178,3 +178,44 @@ Work Log:
 Stage Summary:
 - App successfully rebranded from RepoHub to GitMaster
 - All existing functionality preserved — repos display, files viewable, branches work
+
+---
+Task ID: 13
+Agent: Main Agent
+Task: Add GitMaster user authentication system with per-user data isolation
+
+Work Log:
+- Added User model to Prisma schema (id, name, email, password, timestamps)
+- Added userId FK to Account model with cascade delete
+- Installed bcryptjs (password hashing) and jose (JWT, edge-compatible)
+- Created src/lib/auth.ts: hashPassword, verifyPassword, signToken, verifyToken, createSessionCookie, deleteSessionCookie, getAuthUser, requireAuth helper, AuthError class
+- Created 4 auth API routes: register (POST), login (POST), me (GET), logout (POST)
+- All auth routes use httpOnly SameSite=Lax cookies with 7-day JWT expiry
+- Updated ALL 7 existing API routes to call requireAuth() and scope queries by userId:
+  - /api/accounts (GET lists user's accounts, POST creates with userId)
+  - /api/accounts/[id] (DELETE checks ownership before removing)
+  - /api/github/repos, /api/github/contents, /api/github/branches, /api/github/commits, /api/github/merge
+- Created LoginView component with login/register toggle, password visibility, form validation, animated entry
+- Updated AppLayout: added user info section at sidebar bottom, user dropdown in header with Sign Out button
+- Updated Zustand store: added user, authLoading, setUser, setAuthLoading, resetAll (for logout)
+- Updated types/index.ts: added User interface
+- Updated services/api.ts: added auth namespace with register, login, me, logout methods
+- Updated page.tsx: auth gate (shows LoginView when not logged in, loading spinner while checking session)
+- Removed Prisma query logging from db.ts to reduce stdout noise
+- Verified all 7 auth tests pass:
+  1. Registration creates user and returns user data with session cookie
+  2. Login validates credentials and returns user data
+  3. /auth/me returns authenticated user from session
+  4. /accounts returns empty array for new user (scoped)
+  5. Unauthenticated access to /accounts returns 401
+  6. Data isolation verified: second user sees empty accounts
+  7. Login page renders with 'Loading GitMaster...' then shows form after auth check fails
+
+Stage Summary:
+- Full authentication system with email/password registration and login
+- JWT-based sessions stored in httpOnly cookies (7-day expiry)
+- All API routes protected and scoped per GitMaster user
+- GitHub accounts and repos are isolated per user
+- Login/Register UI with smooth animations
+- User info and sign-out button in sidebar and header
+- All tests pass via automated curl verification

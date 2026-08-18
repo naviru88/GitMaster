@@ -1,8 +1,10 @@
 'use client';
 
 import React, { useMemo } from 'react';
-import { GitBranch, LayoutDashboard, Sparkles, Menu, Plus, ChevronDown } from 'lucide-react';
+import { GitBranch, LayoutDashboard, Sparkles, Menu, Plus, ChevronDown, LogOut, User as UserIcon } from 'lucide-react';
+import { toast } from 'sonner';
 import { useAppStore } from '@/store/appStore';
+import { auth } from '@/services/api';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -39,6 +41,8 @@ interface AppLayoutProps {
 
 export default function AppLayout({ children, onAddAccount }: AppLayoutProps) {
   const [mobileOpen, setMobileOpen] = React.useState(false);
+  const user = useAppStore((s) => s.user);
+  const resetAll = useAppStore((s) => s.resetAll);
   const accounts = useAppStore((s) => s.accounts);
   const selectedAccountId = useAppStore((s) => s.selectedAccountId);
   const view = useAppStore((s) => s.view);
@@ -48,6 +52,17 @@ export default function AppLayout({ children, onAddAccount }: AppLayoutProps) {
   const filePath = useAppStore((s) => s.filePath);
 
   const selectedAccount = accounts.find((a) => a.id === selectedAccountId);
+
+  const handleLogout = async () => {
+    try {
+      await auth.logout();
+      resetAll();
+      toast.success('Signed out successfully.');
+    } catch {
+      // Even if the API call fails, clear local state
+      resetAll();
+    }
+  };
 
   const breadcrumbItems = useMemo(() => {
     const items: { label: string; view?: AppView; onClick?: () => void }[] = [];
@@ -172,6 +187,27 @@ export default function AppLayout({ children, onAddAccount }: AppLayoutProps) {
           </Button>
         </div>
       </div>
+
+      {/* User section at bottom */}
+      <Separator className="bg-gray-800" />
+      <div className="p-3">
+        <div className="flex items-center gap-2.5 px-2 py-1.5">
+          <div className="flex size-7 items-center justify-center rounded-full bg-gray-800 text-gray-300">
+            <UserIcon className="size-3.5" />
+          </div>
+          <div className="flex flex-col min-w-0 flex-1">
+            <span className="truncate text-xs font-medium text-gray-300">{user?.name || 'User'}</span>
+            <span className="truncate text-[10px] text-gray-500">{user?.email || ''}</span>
+          </div>
+          <button
+            onClick={() => { handleLogout(); setMobileOpen(false); }}
+            className="text-gray-500 hover:text-gray-300 transition-colors p-1 rounded"
+            title="Sign out"
+          >
+            <LogOut className="size-3.5" />
+          </button>
+        </div>
+      </div>
     </div>
   );
 
@@ -227,8 +263,8 @@ export default function AppLayout({ children, onAddAccount }: AppLayoutProps) {
             </BreadcrumbList>
           </Breadcrumb>
 
-          {/* Account selector (right) */}
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+            {/* GitHub account selector */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" size="sm" className="gap-2">
@@ -249,7 +285,7 @@ export default function AppLayout({ children, onAddAccount }: AppLayoutProps) {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56">
-                <DropdownMenuLabel>Accounts</DropdownMenuLabel>
+                <DropdownMenuLabel>GitHub Accounts</DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 {accounts.length === 0 && (
                   <DropdownMenuItem disabled>No accounts yet</DropdownMenuItem>
@@ -279,6 +315,29 @@ export default function AppLayout({ children, onAddAccount }: AppLayoutProps) {
                 <DropdownMenuItem onClick={onAddAccount} className="gap-2">
                   <Plus className="size-4" />
                   Add Account
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            {/* User menu */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm" className="gap-2 text-sm">
+                  <div className="flex size-6 items-center justify-center rounded-full bg-muted">
+                    <UserIcon className="size-3" />
+                  </div>
+                  <span className="hidden sm:inline max-w-[100px] truncate">{user?.name || 'User'}</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuLabel className="flex flex-col">
+                  <span className="text-sm font-medium">{user?.name || 'User'}</span>
+                  <span className="text-xs text-muted-foreground font-normal">{user?.email || ''}</span>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={handleLogout} className="gap-2 text-destructive focus:text-destructive">
+                  <LogOut className="size-4" />
+                  Sign Out
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

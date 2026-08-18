@@ -7,6 +7,17 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  password  String   // hashed
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  accounts Account[]
+}
+
 model Account {
   id         String   @id @default(cuid())
   label      String                        // User-given label e.g. "Work", "Personal"
@@ -16,4 +27,7 @@ model Account {
   provider   String   @default("github")
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }

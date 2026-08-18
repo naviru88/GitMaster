@@ -1,10 +1,12 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getContents, getFile, createOrUpdateFile, deleteFile } from '@/lib/github';
 import { githubError } from '@/lib/errors';
+import { requireAuth, AuthError } from '@/lib/auth';
 
 export async function GET(req: NextRequest) {
   try {
+    const user = await requireAuth(req);
     const accountId = req.nextUrl.searchParams.get('accountId');
     const owner = req.nextUrl.searchParams.get('owner');
     const repo = req.nextUrl.searchParams.get('repo');
@@ -13,11 +15,11 @@ export async function GET(req: NextRequest) {
     const single = req.nextUrl.searchParams.get('single') === 'true';
 
     if (!accountId || !owner || !repo) {
-      return Response.json({ error: 'accountId, owner, and repo are required' }, { status: 400 });
+      return NextResponse.json({ error: 'accountId, owner, and repo are required' }, { status: 400 });
     }
 
-    const account = await db.account.findUnique({ where: { id: accountId } });
-    if (!account) return Response.json({ error: 'Account not found' }, { status: 404 });
+    const account = await db.account.findFirst({ where: { id: accountId, userId: user.id } });
+    if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 });
 
     const token = account.token ?? undefined;
 
@@ -25,27 +27,31 @@ export async function GET(req: NextRequest) {
       ? await getFile(token, owner, repo, path, ref)
       : await getContents(token, owner, repo, path, ref);
 
-    return Response.json(result);
+    return NextResponse.json(result);
   } catch (err: unknown) {
+    if (err instanceof AuthError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
     const { message, status } = githubError(err);
-    return Response.json({ error: message }, { status });
+    return NextResponse.json({ error: message }, { status });
   }
 }
 
 export async function POST(req: NextRequest) {
   try {
+    const user = await requireAuth(req);
     const accountId = req.nextUrl.searchParams.get('accountId');
     const action = req.nextUrl.searchParams.get('action');
 
     if (!accountId) {
-      return Response.json({ error: 'accountId is required' }, { status: 400 });
+      return NextResponse.json({ error: 'accountId is required' }, { status: 400 });
     }
 
-    const account = await db.account.findUnique({ where: { id: accountId } });
-    if (!account) return Response.json({ error: 'Account not found' }, { status: 404 });
+    const account = await db.account.findFirst({ where: { id: accountId, userId: user.id } });
+    if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 });
 
     if (!account.token) {
-      return Response.json({ error: 'A Personal Access Token is required for write operations.' }, { status: 403 });
+      return NextResponse.json({ error: 'A Personal Access Token is required for write operations.' }, { status: 403 });
     }
 
     const body = await req.json();
@@ -61,11 +67,11 @@ export async function POST(req: NextRequest) {
       };
 
       if (!owner || !repo || !path || !message || !sha) {
-        return Response.json({ error: 'owner, repo, path, message, and sha are required' }, { status: 400 });
+        return NextResponse.json({ error: 'owner, repo, path, message, and sha are required' }, { status: 400 });
       }
 
       await deleteFile(account.token, owner, repo, path, message, sha, branch);
-      return Response.json({ success: true });
+      return NextResponse.json({ success: true });
     }
 
     // action === 'save' or default
@@ -81,13 +87,16 @@ export async function POST(req: NextRequest) {
     };
 
     if (!owner || !repo || !path || content === undefined || !message) {
-      return Response.json({ error: 'owner, repo, path, content, and message are required' }, { status: 400 });
+      return NextResponse.json({ error: 'owner, repo, path, content, and message are required' }, { status: 400 });
     }
 
     const result = await createOrUpdateFile(account.token, owner, repo, path, content, message, sha, branch, isBase64);
-    return Response.json(result);
+    return NextResponse.json(result);
   } catch (err: unknown) {
+    if (err instanceof AuthError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
     const { message, status } = githubError(err);
-    return Response.json({ error: message }, { status });
+    return NextResponse.json({ error: message }, { status });
   }
 }

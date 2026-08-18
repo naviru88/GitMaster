@@ -1,45 +1,58 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getGitHubUser } from '@/lib/github';
+import { requireAuth, AuthError } from '@/lib/auth';
 
 function stripToken(account: { token: string; [key: string]: unknown }) {
   const { token, ...rest } = account;
   return rest;
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    const accounts = await db.account.findMany({ orderBy: { createdAt: 'desc' } });
-    return Response.json(accounts.map(stripToken));
+    const user = await requireAuth(req);
+    const accounts = await db.account.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: 'desc' },
+    });
+    return NextResponse.json(accounts.map(stripToken));
   } catch (err: unknown) {
+    if (err instanceof AuthError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
     const message = err instanceof Error ? err.message : 'Failed to fetch accounts';
-    return Response.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
 export async function POST(req: NextRequest) {
   try {
+    const user = await requireAuth(req);
     const body = await req.json();
     const { label, token } = body as { label?: string; token?: string };
 
     if (!label || !token) {
-      return Response.json({ error: 'label and token are required' }, { status: 400 });
+      return NextResponse.json({ error: 'label and token are required' }, { status: 400 });
     }
 
-    const user = await getGitHubUser(token);
+    const ghUser = await getGitHubUser(token);
 
     const account = await db.account.create({
       data: {
         label,
-        username: user.login,
-        avatarUrl: user.avatar_url,
+        username: ghUser.login,
+        avatarUrl: ghUser.avatar_url,
         token,
+        userId: user.id,
       },
     });
 
-    return Response.json(stripToken(account), { status: 201 });
+    return NextResponse.json(stripToken(account), { status: 201 });
   } catch (err: unknown) {
+    if (err instanceof AuthError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
     const message = err instanceof Error ? err.message : 'Failed to create account';
-    return Response.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
