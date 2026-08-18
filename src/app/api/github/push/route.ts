@@ -4,6 +4,8 @@ import { batchCommit } from '@/lib/github';
 import { requireAuth, AuthError } from '@/lib/auth';
 import { githubError } from '@/lib/errors';
 
+export const maxDuration = 60; // Allow up to 60s for large batch pushes
+
 export async function POST(req: NextRequest) {
   try {
     const user = await requireAuth(req);

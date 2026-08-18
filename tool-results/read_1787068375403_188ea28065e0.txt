@@ -1,0 +1,759 @@
+   130→
+   131→    const allPaths = rawFiles.map((f) => getRelativePath(f));
+   132→    const { included: incPaths, excluded: excPaths } = filterByGitignore(allPaths, gitignoreContent);
+   133→    const incSet = new Set(incPaths);
+   134→    const excSet = new Set(excPaths);
+   135→
+   136→    return {
+   137→      included: rawFiles.filter((f) => {
+   138→        const rp = getRelativePath(f);
+   139→        if (forceIncludes.has(rp)) return true;
+   140→        return incSet.has(rp);
+   141→      }),
+   142→      excluded: rawFiles.filter((f) => {
+   143→        const rp = getRelativePath(f);
+   144→        if (forceIncludes.has(rp)) return false;
+   145→        return excSet.has(rp);
+   146→      }),
+   147→    };
+   148→  }, [rawFiles, gitignoreEnabled, gitignoreSource, gitignoreContent, forceIncludes, getRelativePath]);
+   149→
+   150→  // Cache stats - how many included files are cached
+   151→  const cachedCount = useMemo(() => {
+   152→    let count = 0;
+   153→    for (const f of included) {
+   154→      if (fileCacheRef.current.has(getRelativePath(f))) count++;
+   155→    }
+   156→    return count;
+   157→  }, [included, getRelativePath]);
+   158→
+   159→  const allCached = cachedCount === included.length && included.length > 0;
+   160→
+   161→  // Auto-detect .gitignore in selected files
+   162→  useEffect(() => {
+   163→    if (rawFiles.length === 0) return;
+   164→    const giFile = rawFiles.find(
+   165→      (f) => f.name === '.gitignore' && (f.relativePath === '.gitignore' || f.relativePath.endsWith('/.gitignore')),
+   166→    );
+   167→    if (giFile) {
+   168→      const reader = new FileReader();
+   169→      reader.onload = (e) => {
+   170→        const content = e.target?.result as string;
+   171→        setGitignoreSource('auto');
+   172→        setGitignoreContent(content);
+   173→      };
+   174→      reader.readAsText(giFile.file);
+   175→    }
+   176→  }, [rawFiles]);
+   177→
+   178→  // Incremental file processing - runs in background when files are selected
+   179→  const processFilesIncrementally = useCallback(async (files: FileItem[]) => {
+   180→    setIsProcessing(true);
+   181→    setProcessingError(null);
+   182→    const total = files.length;
+   183→    setProcessingQueue(total);
+   184→    setProcessingDone(0);
+   185→
+   186→    for (let i = 0; i < total; i++) {
+   187→      try {
+   188→        const f = files[i];
+   189→        const rp = f.relativePath.includes('/')
+   190→          ? f.relativePath.split('/').slice(1).join('/')
+   191→          : f.relativePath;
+   192→
+   193→        // Skip if already cached
+   194→        if (fileCacheRef.current.has(rp)) {
+   195→          setProcessingDone(i + 1);
+   196→          await yieldToMain();
+   197→          continue;
+   198→        }
+   199→
+   200→        const buffer = await f.file.arrayBuffer();
+   201→        const base64 = arrayBufferToBase64(buffer);
+   202→        fileCacheRef.current.set(rp, base64);
+   203→        setProcessingDone(i + 1);
+   204→
+   205→        // Yield every 3 files to keep UI responsive
+   206→        if (i % 3 === 0) {
+   207→          await yieldToMain();
+   208→        }
+   209→      } catch (err) {
+   210→        setProcessingError(`Failed to read file: ${files[i].name}`);
+   211→        setIsProcessing(false);
+   212→        return;
+   213→      }
+   214→    }
+   215→
+   216→    setIsProcessing(false);
+   217→  }, []);
+   218→
+   219→  // Start processing when files change
+   220→  useEffect(() => {
+   221→    if (rawFiles.length > 0) {
+   222→      // Clean cache for files that are no longer in the list
+   223→      const currentPaths = new Set(rawFiles.map((f) => getRelativePath(f)));
+   224→      for (const key of fileCacheRef.current.keys()) {
+   225→        if (!currentPaths.has(key)) {
+   226→          fileCacheRef.current.delete(key);
+   227→        }
+   228→      }
+   229→      processFilesIncrementally(rawFiles);
+   230→    }
+   231→  }, [rawFiles, processFilesIncrementally, getRelativePath]);
+   232→
+   233→  const handleFolderSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+   234→    const list = e.target.files;
+   235→    if (!list || list.length === 0) return;
+   236→    const items: FileItem[] = [];
+   237→    for (let i = 0; i < list.length; i++) {
+   238→      const f = list[i];
+   239→      const relPath = (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name;
+   240→      items.push({ name: f.name, relativePath: relPath, size: f.size, file: f });
+   241→    }
+   242→    setRawFiles(items);
+   243→    setForceIncludes(new Set());
+   244→    e.target.value = '';
+   245→  };
+   246→
+   247→  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+   248→    const list = e.target.files;
+   249→    if (!list || list.length === 0) return;
+   250→    const items: FileItem[] = [];
+   251→    for (let i = 0; i < list.length; i++) {
+   252→      const f = list[i];
+   253→      items.push({ name: f.name, relativePath: f.name, size: f.size, file: f });
+   254→    }
+   255→    setRawFiles(items);
+   256→    setForceIncludes(new Set());
+   257→    e.target.value = '';
+   258→  };
+   259→
+   260→  const handleGitignoreFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+   261→    const file = e.target.files?.[0];
+   262→    if (!file) return;
+   263→    const reader = new FileReader();
+   264→    reader.onload = (ev) => {
+   265→      const content = ev.target?.result as string;
+   266→      setGitignoreSource('manual');
+   267→      setGitignoreContent(content);
+   268→      toast.success(`Loaded .gitignore from ${file.name}`);
+   269→    };
+   270→    reader.readAsText(file);
+   271→    e.target.value = '';
+   272→  };
+   273→
+   274→  const toggleForceInclude = (path: string) => {
+   275→    setForceIncludes((prev) => {
+   276→      const next = new Set(prev);
+   277→      if (next.has(path)) {
+   278→        next.delete(path);
+   279→      } else {
+   280→        next.add(path);
+   281→      }
+   282→      return next;
+   283→    });
+   284→  };
+   285→
+   286→  const removeFile = (index: number) => {
+   287→    setRawFiles((prev) => prev.filter((_, i) => i !== index));
+   288→  };
+   289→
+   290→  const handlePush = async () => {
+   291→    if (!selectedAccountId || !selectedRepo || included.length === 0) return;
+   292→    const msg = commitMessage.trim() || 'Push files';
+   293→    const branch = selectedBranch || selectedRepo.default_branch;
+   294→
+   295→    setPushing(true);
+   296→    setPushProgress(0);
+   297→
+   298→    try {
+   299→      // All files should already be cached from incremental processing
+   300→      const fileData: Array<{ path: string; content: string; isBase64: boolean }> = [];
+   301→      for (let i = 0; i < included.length; i++) {
+   302→        const f = included[i];
+   303→        const rp = getRelativePath(f);
+   304→        const cached = fileCacheRef.current.get(rp);
+   305→        if (cached) {
+   306→          fileData.push({ path: rp, content: cached, isBase64: true });
+   307→        } else {
+   308→          // Fallback: read on the fly (shouldn't normally happen)
+   309→          const buffer = await f.file.arrayBuffer();
+   310→          const base64 = arrayBufferToBase64(buffer);
+   311→          fileData.push({ path: rp, content: base64, isBase64: true });
+   312→        }
+   313→        setPushProgress(Math.round(((i + 1) / included.length) * 90));
+   314→      }
+   315→
+   316→      const result = await github.push.batch(
+   317→        selectedAccountId,
+   318→        selectedRepo.owner.login,
+   319→        selectedRepo.name,
+   320→        branch,
+   321→        fileData,
+   322→        msg,
+   323→        filePath || undefined,
+   324→      );
+   325→
+   326→      setPushProgress(100);
+   327→      const excludedNote = excluded.length > 0 ? ` (${excluded.length} file(s) excluded by .gitignore)` : '';
+   328→      toast.success(`Pushed ${result.filesCommitted} file(s) in commit ${result.sha.slice(0, 7)}${excludedNote}`);
+   329→      resetState();
+   330→      onOpenChange(false);
+   331→      onSuccess();
+   332→    } catch (err) {
+   333→      toast.error(err instanceof Error ? err.message : 'Push failed.');
+   334→    } finally {
+   335→      setPushing(false);
+   336→      setPushProgress(0);
+   337→    }
+   338→  };
+   339→
+   340→  const resetState = () => {
+   341→    setStep('message');
+   342→    setRawFiles([]);
+   343→    setCommitMessage('');
+   344→    setPushProgress(0);
+   345→    setGitignoreSource('none');
+   346→    setGitignoreContent(DEFAULT_GITIGNORE_PATTERNS);
+   347→    setForceIncludes(new Set());
+   348→    setShowExcluded(false);
+   349→    setProcessingQueue(0);
+   350→    setProcessingDone(0);
+   351→    setProcessingError(null);
+   352→    setIsProcessing(false);
+   353→    fileCacheRef.current.clear();
+   354→  };
+   355→
+   356→  const formatSize = (bytes: number) => {
+   357→    if (bytes < 1024) return `${bytes} B`;
+   358→    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+   359→    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+   360→  };
+   361→
+   362→  const totalSize = included.reduce((sum, f) => sum + f.size, 0);
+   363→  const excludedSize = excluded.reduce((sum, f) => sum + f.size, 0);
+   364→  const processingPercent = processingQueue > 0 ? Math.round((processingDone / processingQueue) * 100) : 0;
+   365→
+   366→  const canGoNext =
+   367→    step === 'message' ? commitMessage.trim().length > 0 :
+   368→    step === 'files' ? included.length > 0 && !isProcessing && !processingError :
+   369→    true;
+   370→
+   371→  const stepLabels: Record<Step, string> = {
+   372→    message: 'Commit Message',
+   373→    files: 'Select Files',
+   374→    review: 'Review & Push',
+   375→  };
+   376→  const stepOrder: Step[] = ['message', 'files', 'review'];
+   377→
+   378→  return (
+   379→    <Dialog
+   380→      open={open}
+   381→      onOpenChange={(v) => {
+   382→        if (!v) resetState();
+   383→        onOpenChange(v);
+   384→      }}
+   385→    >
+   386→      <DialogContent className="sm:max-w-lg max-h-[90vh] flex flex-col">
+   387→        <DialogHeader className="shrink-0">
+   388→          <DialogTitle className="flex items-center gap-2">
+   389→            <FolderUp className="size-5" />
+   390→            Push to {selectedRepo?.name}
+   391→          </DialogTitle>
+   392→          <DialogDescription>
+   393→            <span className="text-xs text-muted-foreground">
+   394→              Branch: <code className="rounded bg-muted px-1 font-mono">{selectedBranch || selectedRepo?.default_branch}</code>
+   395→              {filePath && (
+   396→                <span>
+   397→                  {' '}· Path: <code className="rounded bg-muted px-1 font-mono">{filePath}</code>
+   398→                </span>
+   399→              )}
+   400→            </span>
+   401→          </DialogDescription>
+   402→
+   403→          {/* Step indicator */}
+   404→          <div className="flex items-center gap-1 mt-3">
+   405→            {stepOrder.map((s, i) => {
+   406→              const isActive = step === s;
+   407→              const isPast = stepOrder.indexOf(step) > i;
+   408→              return (
+   409→                <React.Fragment key={s}>
+   410→                  {i > 0 && <ChevronRight className="size-3.5 text-muted-foreground shrink-0" />}
+   411→                  <div className="flex items-center gap-1.5">
+   412→                    <div
+   413→                      className={`flex items-center justify-center size-6 rounded-full text-xs font-medium transition-colors ${
+   414→                        isActive
+   415→                          ? 'bg-primary text-primary-foreground'
+   416→                          : isPast
+   417→                            ? 'bg-primary/20 text-primary'
+   418→                            : 'bg-muted text-muted-foreground'
+   419→                      }`}
+   420→                    >
+   421→                      {isPast ? <Check className="size-3" /> : i + 1}
+   422→                    </div>
+   423→                    <span className={`text-xs hidden sm:inline ${isActive ? 'font-medium text-foreground' : 'text-muted-foreground'}`}>
+   424→                      {stepLabels[s]}
+   425→                    </span>
+   426→                  </div>
+   427→                </React.Fragment>
+   428→              );
+   429→            })}
+   430→          </div>
+   431→        </DialogHeader>
+   432→
+   433→        <div className="flex flex-col gap-4 overflow-y-auto flex-1 min-h-0">
+   434→          {/* ==================== STEP 1: Commit Message ==================== */}
+   435→          {step === 'message' && (
+   436→            <div className="flex flex-col gap-3 py-2">
+   437→              <div className="flex flex-col gap-2">
+   438→                <Label htmlFor="push-msg">Commit message</Label>
+   439→                <Input
+   440→                  id="push-msg"
+   441→                  placeholder="e.g. Add new feature files"
+   442→                  value={commitMessage}
+   443→                  onChange={(e) => setCommitMessage(e.target.value)}
+   444→                  autoFocus
+   445→                />
+   446→                <p className="text-xs text-muted-foreground">
+   447→                  Describe what you are pushing. You can select files in the next step.
+   448→                </p>
+   449→              </div>
+   450→            </div>
+   451→          )}
+   452→
+   453→          {/* ==================== STEP 2: Select Files ==================== */}
+   454→          {step === 'files' && (
+   455→            <div className="flex flex-col gap-4 py-2">
+   456→              {/* File selection buttons */}
+   457→              <div className="flex gap-2">
+   458→                <label className="flex-1">
+   459→                  <input
+   460→                    type="file"
+   461→                    {...({ webkitdirectory: '', directory: '' } as Record<string, string>)}
+   462→                    className="sr-only"
+   463→                    onChange={handleFolderSelect}
+   464→                    disabled={isProcessing || pushing}
+   465→                  />
+   466→                  <div className="flex items-center justify-center gap-2 h-9 rounded-md border border-input bg-background px-3 text-sm font-medium ring-offset-background cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors">
+   467→                    <FolderUp className="size-4" />
+   468→                    Select Folder
+   469→                  </div>
+   470→                </label>
+   471→                <label className="flex-1">
+   472→                  <input
+   473→                    type="file"
+   474→                    multiple
+   475→                    className="sr-only"
+   476→                    onChange={handleFileSelect}
+   477→                    disabled={isProcessing || pushing}
+   478→                  />
+   479→                  <div className="flex items-center justify-center gap-2 h-9 rounded-md border border-input bg-background px-3 text-sm font-medium ring-offset-background cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors">
+   480→                    <Upload className="size-4" />
+   481→                    Select Files
+   482→                  </div>
+   483→                </label>
+   484→              </div>
+   485→
+   486→              {/* Processing progress */}
+   487→              {(isProcessing || (processingDone > 0 && processingDone < processingQueue)) && (
+   488→                <div className="flex flex-col gap-1.5">
+   489→                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+   490→                    <span className="flex items-center gap-1.5">
+   491→                      <HardDrive className="size-3 animate-pulse" />
+   492→                      Caching files… {processingDone}/{processingQueue}
+   493→                    </span>
+   494→                    <span>{processingPercent}%</span>
+   495→                  </div>
+   496→                  <Progress value={processingPercent} className="h-1.5" />
+   497→                </div>
+   498→              )}
+   499→
+   500→              {/* Processing complete notification */}
+   501→              {!isProcessing && processingDone > 0 && processingDone >= processingQueue && !processingError && (
+   502→                <div className="flex items-center gap-2 text-xs text-green-600">
+   503→                  <Check className="size-3.5" />
+   504→                  <span>All {processingDone} file(s) cached and ready to push</span>
+   505→                </div>
+   506→              )}
+   507→
+   508→              {/* Processing error */}
+   509→              {processingError && (
+   510→                <div className="flex items-center gap-2 text-xs text-destructive">
+   511→                  <FileX2 className="size-3.5" />
+   512→                  <span>{processingError}</span>
+   513→                </div>
+   514→              )}
+   515→
+   516→              {/* .gitignore section */}
+   517→              {rawFiles.length > 0 && (
+   518→                <div className="border rounded-lg p-3">
+   519→                  <div className="flex items-center justify-between mb-2">
+   520→                    <div className="flex items-center gap-2">
+   521→                      <Label className="text-sm font-medium flex items-center gap-1.5">
+   522→                        {gitignoreEnabled ? (
+   523→                          <ShieldCheck className="size-4 text-green-600" />
+   524→                        ) : (
+   525→                          <ShieldOff className="size-4 text-muted-foreground" />
+   526→                        )}
+   527→                        .gitignore
+   528→                      </Label>
+   529→                      {gitignoreSource === 'auto' && (
+   530→                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+   531→                          auto-detected
+   532→                        </Badge>
+   533→                      )}
+   534→                      {gitignoreSource === 'manual' && (
+   535→                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+   536→                          uploaded
+   537→                        </Badge>
+   538→                      )}
+   539→                    </div>
+   540→                    <div className="flex items-center gap-2">
+   541→                      <Tooltip>
+   542→                        <TooltipTrigger asChild>
+   543→                          <label className="cursor-pointer">
+   544→                            <input
+   545→                              ref={gitignoreFileRef}
+   546→                              type="file"
+   547→                              accept=".gitignore"
+   548→                              className="sr-only"
+   549→                              onChange={handleGitignoreFileUpload}
+   550→                              disabled={pushing}
+   551→                            />
+   552→                            <span className="flex items-center gap-1 h-7 text-xs text-muted-foreground hover:text-foreground px-2 py-1 rounded-md hover:bg-accent transition-colors">
+   553→                              <UploadCloud className="size-3" />
+   554→                              Load File
+   555→                            </span>
+   556→                          </label>
+   557→                        </TooltipTrigger>
+   558→                        <TooltipContent>Upload a .gitignore file from your machine</TooltipContent>
+   559→                      </Tooltip>
+   560→                      <Switch
+   561→                        checked={gitignoreEnabled}
+   562→                        onCheckedChange={setGitignoreEnabled}
+   563→                        disabled={pushing}
+   564→                      />
+   565→                    </div>
+   566→                  </div>
+   567→
+   568→                  {gitignoreEnabled && gitignoreSource !== 'none' && (
+   569→                    <>
+   570→                      {excluded.length > 0 && (
+   571→                        <div className="flex items-center gap-2 mb-2 text-xs">
+   572→                          <FileX2 className="size-3.5 text-orange-500" />
+   573→                          <span className="text-orange-600 font-medium">
+   574→                            {excluded.length} file(s) excluded
+   575→                          </span>
+   576→                          <span className="text-muted-foreground">
+   577→                            ({formatSize(excludedSize)} saved)
+   578→                          </span>
+   579→                          <button
+   580→                            className="ml-auto text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
+   581→                            onClick={() => setShowExcluded((v) => !v)}
+   582→                          >
+   583→                            {showExcluded ? (
+   584→                              <><EyeOff className="size-3" /> Hide</>
+   585→                            ) : (
+   586→                              <><Eye className="size-3" /> Show</>
+   587→                            )}
+   588→                          </button>
+   589→                        </div>
+   590→                      )}
+   591→
+   592→                      {/* Excluded files list */}
+   593→                      {showExcluded && excluded.length > 0 && (
+   594→                        <ScrollArea className="max-h-28 mb-2">
+   595→                          <div className="divide-y rounded border bg-destructive/5">
+   596→                            {excluded.map((f, i) => {
+   597→                              const rp = getRelativePath(f);
+   598→                              const isForced = forceIncludes.has(rp);
+   599→                              return (
+   600→                                <div
+   601→                                  key={`exc-${i}`}
+   602→                                  className={`flex items-center gap-2 px-3 py-1 text-xs group ${isForced ? 'opacity-50 line-through' : ''}`}
+   603→                                >
+   604→                                  <Checkbox
+   605→                                    checked={isForced}
+   606→                                    onCheckedChange={() => toggleForceInclude(rp)}
+   607→                                    className="size-3.5"
+   608→                                  />
+   609→                                  <FileText className="size-3 text-muted-foreground shrink-0" />
+   610→                                  <span className="flex-1 truncate font-mono" title={rp}>{rp}</span>
+   611→                                  <span className="text-muted-foreground shrink-0">{formatSize(f.size)}</span>
+   612→                                  <Tooltip>
+   613→                                    <TooltipTrigger asChild>
+   614→                                      <button
+   615→                                        onClick={() => toggleForceInclude(rp)}
+   616→                                        className="text-muted-foreground hover:text-green-600 transition-colors"
+   617→                                      >
+   618→                                        {isForced ? <ShieldOff className="size-3" /> : <ShieldCheck className="size-3" />}
+   619→                                      </button>
+   620→                                    </TooltipTrigger>
+   621→                                    <TooltipContent>
+   622→                                      {isForced ? 'Re-exclude this file' : 'Force-include this file'}
+   623→                                    </TooltipContent>
+   624→                                  </Tooltip>
+   625→                                </div>
+   626→                              );
+   627→                            })}
+   628→                          </div>
+   629→                        </ScrollArea>
+   630→                      )}
+   631→
+   632→                      {/* Editable gitignore content */}
+   633→                      <Collapsible>
+   634→                        <CollapsibleTrigger asChild>
+   635→                          <Button
+   636→                            variant="ghost"
+   637→                            size="sm"
+   638→                            className="w-full h-7 text-xs text-muted-foreground hover:text-foreground justify-start gap-1.5"
+   639→                          >
+   640→                            Edit .gitignore rules
+   641→                          </Button>
+   642→                        </CollapsibleTrigger>
+   643→                        <CollapsibleContent>
+   644→                          <textarea
+   645→                            className="mt-1 w-full min-h-[80px] max-h-[200px] rounded-md border bg-muted/50 px-3 py-2 text-xs font-mono resize-y focus:outline-none focus:ring-2 focus:ring-ring"
+   646→                            value={gitignoreContent}
+   647→                            onChange={(e) => {
+   648→                              setGitignoreContent(e.target.value);
+   649→                              if (gitignoreSource === 'auto') setGitignoreSource('manual');
+   650→                            }}
+   651→                            disabled={pushing}
+   652→                            placeholder="# Add gitignore patterns here..."
+   653→                            spellCheck={false}
+   654→                          />
+   655→                        </CollapsibleContent>
+   656→                      </Collapsible>
+   657→                    </>
+   658→                  )}
+   659→
+   660→                  {gitignoreEnabled && gitignoreSource === 'none' && (
+   661→                    <p className="text-xs text-muted-foreground">
+   662→                      Using default rules (node_modules/, .git/, .DS_Store, Thumbs.db, *.log).{' '}
+   663→                      <button
+   664→                        className="text-primary hover:underline"
+   665→                        onClick={() => gitignoreFileRef.current?.click()}
+   666→                      >
+   667→                        Upload a .gitignore file
+   668→                      </button>{' '}
+   669→                      to use your project rules.
+   670→                    </p>
+   671→                  )}
+   672→
+   673→                  {!gitignoreEnabled && (
+   674→                    <p className="text-xs text-muted-foreground">
+   675→                      .gitignore filtering is disabled. All selected files will be pushed.
+   676→                    </p>
+   677→                  )}
+   678→                </div>
+   679→              )}
+   680→
+   681→              {/* Included file list */}
+   682→              {included.length > 0 && (
+   683→                <div className="border rounded-lg overflow-hidden">
+   684→                  <div className="flex items-center justify-between px-3 py-2 bg-muted/50 border-b text-xs text-muted-foreground">
+   685→                    <span className="flex items-center gap-1.5">
+   686→                      <FileCheck2 className="size-3.5 text-green-600" />
+   687→                      {included.length} file(s) to push
+   688→                      {excluded.length > 0 && gitignoreEnabled && (
+   689→                        <span className="text-orange-500"> ({excluded.length} excluded)</span>
+   690→                      )}
+   691→                    </span>
+   692→                    <span>{formatSize(totalSize)}</span>
+   693→                  </div>
+   694→                  <ScrollArea className="max-h-48">
+   695→                    <div className="divide-y">
+   696→                      {included.map((f, i) => {
+   697→                        const rp = getRelativePath(f);
+   698→                        const isCached = fileCacheRef.current.has(rp);
+   699→                        return (
+   700→                          <div key={`inc-${i}`} className="flex items-center gap-2 px-3 py-1.5 text-sm group">
+   701→                            {isCached ? (
+   702→                              <Check className="size-3.5 text-green-600 shrink-0" />
+   703→                            ) : isProcessing ? (
+   704→                              <Loader2 className="size-3.5 animate-spin text-muted-foreground shrink-0" />
+   705→                            ) : (
+   706→                              <FileText className="size-3.5 text-muted-foreground shrink-0" />
+   707→                            )}
+   708→                            <span className="flex-1 truncate font-mono text-xs" title={rp}>{rp}</span>
+   709→                            <span className="text-xs text-muted-foreground shrink-0">{formatSize(f.size)}</span>
+   710→                            {!pushing && (
+   711→                              <button
+   712→                                onClick={() => removeFile(rawFiles.indexOf(f))}
+   713→                                className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
+   714→                              >
+   715→                                <X className="size-3.5" />
+   716→                              </button>
+   717→                            )}
+   718→                          </div>
+   719→                        );
+   720→                      })}
+   721→                    </div>
+   722→                  </ScrollArea>
+   723→                </div>
+   724→              )}
+   725→
+   726→              {/* No files after filtering warning */}
+   727→              {rawFiles.length > 0 && included.length === 0 && (
+   728→                <div className="border rounded-lg p-4 text-center">
+   729→                  <FileX2 className="size-8 mx-auto text-orange-500 mb-2" />
+   730→                  <p className="text-sm text-muted-foreground">
+   731→                    All {rawFiles.length} selected file(s) match .gitignore rules.
+   732→                  </p>
+   733→                  <p className="text-xs text-muted-foreground mt-1">
+   734→                    Show excluded files to force-include specific ones, or disable .gitignore filtering.
+   735→                  </p>
+   736→                </div>
+   737→              )}
+   738→            </div>
+   739→          )}
+   740→
+   741→          {/* ==================== STEP 3: Review & Push ==================== */}
+   742→          {step === 'review' && (
+   743→            <div className="flex flex-col gap-4 py-2">
+   744→              {/* Summary card */}
+   745→              <div className="border rounded-lg p-4 space-y-3">
+   746→                <div className="flex items-center justify-between">
+   747→                  <span className="text-sm font-medium">Commit Message</span>
+   748→                  <code className="text-xs bg-muted rounded px-2 py-0.5 max-w-[60%] truncate block text-right" title={commitMessage}>
+   749→                    {commitMessage}
+   750→                  </code>
+   751→                </div>
+   752→                <div className="h-px bg-border" />
+   753→                <div className="flex items-center justify-between">
+   754→                  <span className="text-sm font-medium">Branch</span>
+   755→                  <code className="text-xs bg-muted rounded px-2 py-0.5">
+   756→                    {selectedBranch || selectedRepo?.default_branch}
+   757→                  </code>
+   758→                </div>
+   759→                {filePath && (
+   760→                  <>
+   761→                    <div className="h-px bg-border" />
+   762→                    <div className="flex items-center justify-between">
+   763→                      <span className="text-sm font-medium">Path Prefix</span>
+   764→                      <code className="text-xs bg-muted rounded px-2 py-0.5">{filePath}</code>
+   765→                    </div>
+   766→                  </>
+   767→                )}
+   768→                <div className="h-px bg-border" />
+   769→                <div className="flex items-center justify-between">
+   770→                  <span className="text-sm font-medium">Files</span>
+   771→                  <span className="text-sm">{included.length} file(s) · {formatSize(totalSize)}</span>
+   772→                </div>
+   773→                {excluded.length > 0 && gitignoreEnabled && (
+   774→                  <div className="flex items-center justify-between">
+   775→                    <span className="text-sm text-muted-foreground">Excluded by .gitignore</span>
+   776→                    <span className="text-xs text-orange-500">{excluded.length} file(s) · {formatSize(excludedSize)}</span>
+   777→                  </div>
+   778→                )}
+   779→                <div className="flex items-center justify-between">
+   780→                  <span className="text-sm font-medium">Cache Status</span>
+   781→                  <span className={`text-xs ${allCached ? 'text-green-600' : 'text-orange-500'}`}>
+   782→                    {allCached ? 'All files cached ✓' : `${cachedCount}/${included.length} cached`}
+   783→                  </span>
+   784→                </div>
+   785→              </div>
+   786→
+   787→              {/* File list */}
+   788→              <div className="border rounded-lg overflow-hidden">
+   789→                <div className="px-3 py-2 bg-muted/50 border-b text-xs text-muted-foreground font-medium">
+   790→                  Files to push
+   791→                </div>
+   792→                <ScrollArea className="max-h-48">
+   793→                  <div className="divide-y">
+   794→                    {included.map((f, i) => {
+   795→                      const rp = getRelativePath(f);
+   796→                      const isCached = fileCacheRef.current.has(rp);
+   797→                      return (
+   798→                        <div key={`rev-${i}`} className="flex items-center gap-2 px-3 py-1.5 text-sm">
+   799→                          {isCached ? (
+   800→                            <Check className="size-3.5 text-green-600 shrink-0" />
+   801→                          ) : (
+   802→                            <FileText className="size-3.5 text-muted-foreground shrink-0" />
+   803→                          )}
+   804→                          <span className="flex-1 truncate font-mono text-xs" title={rp}>{rp}</span>
+   805→                          <span className="text-xs text-muted-foreground shrink-0">{formatSize(f.size)}</span>
+   806→                        </div>
+   807→                      );
+   808→                    })}
+   809→                  </div>
+   810→                </ScrollArea>
+   811→              </div>
+   812→
+   813→              {/* Push progress */}
+   814→              {pushing && (
+   815→                <div className="flex flex-col gap-2">
+   816→                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+   817→                    <span className="flex items-center gap-1.5">
+   818→                      <Loader2 className="size-3 animate-spin" />
+   819→                      Uploading to GitHub…
+   820→                    </span>
+   821→                    <span>{pushProgress}%</span>
+   822→                  </div>
+   823→                  <Progress value={pushProgress} />
+   824→                </div>
+   825→              )}
+   826→            </div>
+   827→          )}
+   828→        </div>
+   829→
+   830→        <DialogFooter className="shrink-0">
+   831→          {step === 'message' && (
+   832→            <>
+   833→              <Button variant="outline" onClick={() => onOpenChange(false)}>
+   834→                Cancel
+   835→              </Button>
+   836→              <Button
+   837→                onClick={() => setStep('files')}
+   838→                disabled={!commitMessage.trim()}
+   839→                className="gap-1.5"
+   840→              >
+   841→                Next: Select Files
+   842→                <ChevronRight className="size-3.5" />
+   843→              </Button>
+   844→            </>
+   845→          )}
+   846→          {step === 'files' && (
+   847→            <>
+   848→              <Button variant="outline" onClick={() => setStep('message')} className="gap-1.5">
+   849→                <ArrowLeft className="size-3.5" />
+   850→                Back
+   851→              </Button>
+   852→              <Button
+   853→                onClick={() => setStep('review')}
+   854→                disabled={!canGoNext}
+   855→                className="gap-1.5"
+   856→              >
+   857→                Next: Review
+   858→                <ChevronRight className="size-3.5" />
+   859→              </Button>
+   860→            </>
+   861→          )}
+   862→          {step === 'review' && (
+   863→            <>
+   864→              <Button
+   865→                variant="outline"
+   866→                onClick={() => setStep('files')}
+   867→                disabled={pushing}
+   868→                className="gap-1.5"
+   869→              >
+   870→                <ArrowLeft className="size-3.5" />
+   871→                Back
+   872→              </Button>
+   873→              <Button
+   874→                onClick={handlePush}
+   875→                disabled={pushing || included.length === 0 || !allCached}
+   876→                className="gap-1.5"
+   877→              >
+   878→                {pushing ? <Loader2 className="size-3.5 animate-spin" /> : <Upload className="size-3.5" />}
+   879→                {pushing ? 'Pushing…' : `Push ${included.length} File(s)`}
+   880→              </Button>
+   881→            </>
+   882→          )}
+   883→        </DialogFooter>
+   884→      </DialogContent>
+   885→    </Dialog>
+   886→  );
+   887→}
+   888→
