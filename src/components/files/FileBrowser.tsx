@@ -140,6 +140,7 @@ export default function FileBrowser() {
           `Upload ${file.name}`,
           undefined,
           selectedBranch || undefined,
+          true,
         );
         toast.success(`Uploaded ${file.name}`);
       } catch (err) {

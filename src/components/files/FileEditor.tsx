@@ -39,8 +39,6 @@ export default function FileEditor() {
   const [deleting, setDeleting] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
-  const isMarkdown = openedFile?.content.name.endsWith('.md') || openedFile?.content.name.endsWith('.mdx');
-
   useEffect(() => {
     if (openedFile) {
       setContent(openedFile.decoded);
@@ -48,8 +46,8 @@ export default function FileEditor() {
   }, [openedFile]);
 
   const handleBack = () => {
-    setOpenedFile(null);
     setView('repo-detail');
+    setOpenedFile(null);
   };
 
   const handleSave = async () => {
@@ -57,13 +55,12 @@ export default function FileEditor() {
     const msg = commitMessage.trim() || `Update ${openedFile.content.name}`;
     setSaving(true);
     try {
-      const base64 = btoa(unescape(encodeURIComponent(content)));
       const result = await github.contents.saveFile(
         selectedAccountId,
         selectedRepo.owner.login,
         selectedRepo.name,
         openedFile.content.path,
-        base64,
+        content,
         msg,
         openedFile.content.sha || undefined,
         selectedBranch || undefined,
@@ -165,6 +162,8 @@ export default function FileEditor() {
       </div>
     );
   }
+
+  const isMarkdown = openedFile.content.name.endsWith('.md') || openedFile.content.name.endsWith('.mdx');
 
   return (
     <div className="flex flex-col h-[calc(100vh-10rem)]">

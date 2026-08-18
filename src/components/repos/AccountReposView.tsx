@@ -40,8 +40,8 @@ export default function AccountReposView() {
         setHasMore(result.items.length >= 30);
       } else {
         const result = await github.repos.list(selectedAccountId, pg);
-        setRepos(append ? [...repos, ...result] : result);
-        setHasMore(result.length >= 30);
+        setRepos(append ? [...repos, ...result.items] : result.items);
+        setHasMore(result.items.length >= 30);
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to fetch repos.');
@@ -74,7 +74,6 @@ export default function AccountReposView() {
 
   const handleRepoClick = (repo: GitHubRepo) => {
     setSelectedRepo(repo);
-    setSelectedBranch(repo.default_branch);
     setView('repo-detail');
   };
 

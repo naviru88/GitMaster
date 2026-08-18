@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
-import { getContents, createOrUpdateFile, deleteFile } from '@/lib/github';
+import { getContents, getFile, createOrUpdateFile, deleteFile } from '@/lib/github';
+import { githubError } from '@/lib/errors';
 
 export async function GET(req: NextRequest) {
   try {
@@ -9,6 +10,7 @@ export async function GET(req: NextRequest) {
     const repo = req.nextUrl.searchParams.get('repo');
     const path = req.nextUrl.searchParams.get('path') ?? '';
     const ref = req.nextUrl.searchParams.get('ref') ?? undefined;
+    const single = req.nextUrl.searchParams.get('single') === 'true';
 
     if (!accountId || !owner || !repo) {
       return Response.json({ error: 'accountId, owner, and repo are required' }, { status: 400 });
@@ -17,11 +19,16 @@ export async function GET(req: NextRequest) {
     const account = await db.account.findUnique({ where: { id: accountId } });
     if (!account) return Response.json({ error: 'Account not found' }, { status: 404 });
 
-    const result = await getContents(account.token, owner, repo, path, ref);
+    const token = account.token ?? undefined;
+
+    const result = single
+      ? await getFile(token, owner, repo, path, ref)
+      : await getContents(token, owner, repo, path, ref);
+
     return Response.json(result);
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Failed to fetch contents';
-    return Response.json({ error: message }, { status: 500 });
+    const { message, status } = githubError(err);
+    return Response.json({ error: message }, { status });
   }
 }
 
@@ -36,6 +43,10 @@ export async function POST(req: NextRequest) {
 
     const account = await db.account.findUnique({ where: { id: accountId } });
     if (!account) return Response.json({ error: 'Account not found' }, { status: 404 });
+
+    if (!account.token) {
+      return Response.json({ error: 'A Personal Access Token is required for write operations.' }, { status: 403 });
+    }
 
     const body = await req.json();
 
@@ -58,7 +69,7 @@ export async function POST(req: NextRequest) {
     }
 
     // action === 'save' or default
-    const { owner, repo, path, content, message, sha, branch } = body as {
+    const { owner, repo, path, content, message, sha, branch, isBase64 } = body as {
       owner: string;
       repo: string;
       path: string;
@@ -66,16 +77,17 @@ export async function POST(req: NextRequest) {
       message: string;
       sha?: string;
       branch?: string;
+      isBase64?: boolean;
     };
 
     if (!owner || !repo || !path || content === undefined || !message) {
       return Response.json({ error: 'owner, repo, path, content, and message are required' }, { status: 400 });
     }
 
-    const result = await createOrUpdateFile(account.token, owner, repo, path, content, message, sha, branch);
+    const result = await createOrUpdateFile(account.token, owner, repo, path, content, message, sha, branch, isBase64);
     return Response.json(result);
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Failed to save/delete file';
-    return Response.json({ error: message }, { status: 500 });
+    const { message, status } = githubError(err);
+    return Response.json({ error: message }, { status });
   }
 }

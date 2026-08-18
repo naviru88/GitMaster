@@ -63,9 +63,9 @@ export const accounts = {
 export const github = {
   repos: {
     list: (accountId: string, page?: number) =>
-      get<GitHubRepo[]>(`/github/repos?accountId=${accountId}&page=${page || 1}`),
+      get<{ items: GitHubRepo[]; totalCount: number }>(`/github/repos?accountId=${accountId}&page=${page || 1}`),
     search: (accountId: string, query: string, page?: number) =>
-      get<{ total_count: number; items: GitHubRepo[] }>(`/github/repos?accountId=${accountId}&q=${encodeURIComponent(query)}&page=${page || 1}`),
+      get<{ items: GitHubRepo[]; totalCount: number }>(`/github/repos?accountId=${accountId}&q=${encodeURIComponent(query)}&page=${page || 1}`),
     create: (accountId: string, opts: { name: string; description?: string; private?: boolean }) =>
       post<GitHubCreateRepoResult>(`/github/repos?accountId=${accountId}`, opts),
     delete: (accountId: string, owner: string, repo: string) =>
@@ -79,12 +79,12 @@ export const github = {
       return get<GitHubContent[]>(`/github/contents?${params.toString()}`);
     },
     getFile: (accountId: string, owner: string, repo: string, path: string, ref?: string) => {
-      const params = new URLSearchParams({ accountId, owner, repo, path });
+      const params = new URLSearchParams({ accountId, owner, repo, path, single: 'true' });
       if (ref) params.set('ref', ref);
-      return get<GitHubContent>(`/github/contents/file?${params.toString()}`);
+      return get<GitHubContent>(`/github/contents?${params.toString()}`);
     },
-    saveFile: (accountId: string, owner: string, repo: string, path: string, content: string, message: string, sha?: string, branch?: string) =>
-      post<GitHubCreateFileResult>(`/github/contents?accountId=${accountId}`, { owner, repo, path, content, message, sha, branch }),
+    saveFile: (accountId: string, owner: string, repo: string, path: string, content: string, message: string, sha?: string, branch?: string, isBase64?: boolean) =>
+      post<GitHubCreateFileResult>(`/github/contents?accountId=${accountId}`, { owner, repo, path, content, message, sha, branch, isBase64 }),
     deleteFile: (accountId: string, owner: string, repo: string, path: string, message: string, sha: string, branch?: string) =>
       post<void>(`/github/contents/delete?accountId=${accountId}`, { owner, repo, path, message, sha, branch }),
   },

@@ -138,3 +138,26 @@ Work Log:
 Stage Summary:
 - All core flows verified: dashboard, account dialog, AI tools, navigation, responsive layout
 - App is fully functional
+
+---
+Task ID: 2
+Agent: Main Agent
+Task: Fix repos not displaying and file viewing crash (reverted codebase)
+
+Work Log:
+- Discovered the codebase had been reverted to an older version with multiple bugs
+- Fixed api.ts: repos.list type (GitHubRepo[] → {items, totalCount}), getFile URL (/contents/file → /contents?single=true), saveFile signature (added isBase64 param)
+- Fixed AccountReposView: result → result.items for non-search list calls
+- Rewrote github.ts: optional token (string | undefined), URL-path-based getContents/getFile (not ?path= query), isBase64 support in createOrUpdateFile, rate-limit detection in ghFetch, added getPublicUser
+- Fixed FileEditor: moved isMarkdown after null guard, fixed handleBack order (setView before setOpenedFile)
+- Fixed appStore: setSelectedRepo initializes selectedBranch from default_branch, setSelectedBranch resets view to 'repo-detail'
+- Created src/lib/errors.ts: githubError helper for rate-limit/auth/404 translation
+- Rewrote contents API route: added getFile import, single param handling, isBase64 passthrough, token guard for writes, githubError usage
+- Fixed FileBrowser upload: added isBase64=true flag for binary upload content
+
+Stage Summary:
+- All 5 repos now display correctly with names, descriptions, languages, timestamps
+- File viewing works for root files, nested files, and markdown with preview
+- Directory navigation works at any depth with correct breadcrumbs
+- Back button preserves directory context
+- No client-side errors
