@@ -59,6 +59,18 @@ interface FileItem {
   file: File;
 }
 
+/** Convert ArrayBuffer to base64 without stack overflow (works for large files) */
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 8192;
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
 export default function PushFolderDialog({ open, onOpenChange, onSuccess }: PushFolderDialogProps) {
   const selectedAccountId = useAppStore((s) => s.selectedAccountId);
   const selectedRepo = useAppStore((s) => s.selectedRepo);
@@ -216,7 +228,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
       for (let i = 0; i < included.length; i++) {
         const f = included[i];
         const buffer = await f.file.arrayBuffer();
-        const base64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+        const base64 = arrayBufferToBase64(buffer);
         const relativePath = getRelativePath(f);
         fileData.push({ path: relativePath, content: base64, isBase64: true });
         setProgress(Math.round(((i + 1) / included.length) * 70));

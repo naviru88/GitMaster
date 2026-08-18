@@ -135,7 +135,12 @@ export default function FileBrowser() {
       const file = files[i];
       try {
         const buffer = await file.arrayBuffer();
-        const base64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+        const bytes = new Uint8Array(buffer);
+        let binary = '';
+        for (let j = 0; j < bytes.length; j += 8192) {
+          binary += String.fromCharCode(...bytes.subarray(j, j + 8192));
+        }
+        const base64 = btoa(binary);
         const path = filePath ? `${filePath}/${file.name}` : file.name;
         await github.contents.saveFile(
           selectedAccountId,

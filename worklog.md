@@ -290,3 +290,22 @@ Stage Summary:
 - Supports auto-detection, manual upload, inline editing, per-file override, and disable toggle
 - Default rules cover common exclusions (node_modules, .git, OS files, logs)
 - Files are filtered client-side before sending to API — no wasted bandwidth
+
+---
+Task ID: 16
+Agent: Main Agent
+Task: Fix push files not working
+
+Work Log:
+- Diagnosed 3 issues preventing file pushes:
+  1. **btoa stack overflow**: `String.fromCharCode(...new Uint8Array(buffer))` crashes for files >100KB. Fixed with chunked approach (8192 bytes per chunk) in both PushFolderDialog and FileBrowser upload handler.
+  2. **`ignore` npm package**: Potential Turbopack bundling issue with CJS package in client component. Replaced entirely with a custom, dependency-free gitignore matcher (`src/lib/gitignore.ts`) that supports globs, negation (!), directory patterns, and comments.
+  3. **Body size limit**: Next.js defaults to 1MB for route handler body. Added `serverBodySizeLimit: "50mb"` to next.config.ts to support large batch pushes.
+- Verified gitignore matcher correctness: node_modules, .git, *.log, .DS_Store excluded; negation (!) works
+- Verified push API endpoint responds correctly (400/404 validation)
+- Lint passes clean
+
+Stage Summary:
+- Push files should now work for any file size and any number of files
+- No external dependencies for gitignore parsing (pure TypeScript)
+- Server accepts up to 50MB request bodies for batch operations

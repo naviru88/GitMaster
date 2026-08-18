@@ -7,6 +7,7 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: true,
   },
   reactStrictMode: false,
+  serverBodySizeLimit: "50mb",
 };
 
 export default nextConfig;
