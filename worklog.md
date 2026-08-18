@@ -161,3 +161,20 @@ Stage Summary:
 - Directory navigation works at any depth with correct breadcrumbs
 - Back button preserves directory context
 - No client-side errors
+
+---
+Task ID: 12
+Agent: Main Agent
+Task: Change app name from RepoHub to GitMaster
+
+Work Log:
+- Found 3 occurrences of "RepoHub" in source code (excluding worklog)
+- Updated src/app/layout.tsx: title metadata → "GitMaster — GitHub Repo Manager"
+- Updated src/components/layout/AppLayout.tsx: sidebar logo text → "GitMaster"
+- Updated src/components/dashboard/DashboardView.tsx: hero heading → "Welcome to GitMaster"
+- Verified no remaining "RepoHub" references in src/
+- Browser verification: all 5 checks passed (page loads, sidebar name, dashboard heading, accounts visible, tab title)
+
+Stage Summary:
+- App successfully rebranded from RepoHub to GitMaster
+- All existing functionality preserved — repos display, files viewable, branches work

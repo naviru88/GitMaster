@@ -87,7 +87,7 @@ export default function AppLayout({ children, onAddAccount }: AppLayoutProps) {
       {/* Logo */}
       <div className="flex h-14 items-center gap-2 px-4">
         <GitBranch className="size-5 text-white" />
-        <span className="text-lg font-bold text-white">RepoHub</span>
+        <span className="text-lg font-bold text-white">GitMaster</span>
       </div>
 
       <Separator className="bg-gray-800" />

@@ -68,7 +68,7 @@ export default function DashboardView({ onAddAccount }: Props) {
     <div className="mx-auto max-w-5xl px-4 py-8">
       {/* Hero */}
       <div className="mb-8">
-        <h1 className="text-3xl font-bold tracking-tight">Welcome to RepoHub</h1>
+        <h1 className="text-3xl font-bold tracking-tight">Welcome to GitMaster</h1>
         <p className="mt-2 text-muted-foreground">
           Manage your GitHub repositories, browse files, and leverage AI tools — all in one place.
         </p>
