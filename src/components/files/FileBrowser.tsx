@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import {
   Folder,
@@ -8,7 +8,6 @@ import {
   FileText,
   FileCode,
   Image as ImageIcon,
-  Upload,
   Plus,
   FolderUp,
   Download,
@@ -81,7 +80,6 @@ export default function FileBrowser() {
   const [newFileName, setNewFileName] = useState('');
   const [pushOpen, setPushOpen] = useState(false);
   const [pullOpen, setPullOpen] = useState(false);
-  const uploadRef = useRef<HTMLInputElement>(null);
 
   const fetchContents = useCallback(async (path: string) => {
     if (!selectedAccountId || !selectedRepo) return;
@@ -126,40 +124,6 @@ export default function FileBrowser() {
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to load file.');
     }
-  };
-
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || !selectedAccountId || !selectedRepo) return;
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      try {
-        const buffer = await file.arrayBuffer();
-        const bytes = new Uint8Array(buffer);
-        let binary = '';
-        for (let j = 0; j < bytes.length; j += 8192) {
-          binary += String.fromCharCode(...bytes.subarray(j, j + 8192));
-        }
-        const base64 = btoa(binary);
-        const path = filePath ? `${filePath}/${file.name}` : file.name;
-        await github.contents.saveFile(
-          selectedAccountId,
-          selectedRepo.owner.login,
-          selectedRepo.name,
-          path,
-          base64,
-          `Upload ${file.name}`,
-          undefined,
-          selectedBranch || undefined,
-          true,
-        );
-        toast.success(`Uploaded ${file.name}`);
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : `Failed to upload ${file.name}`);
-      }
-    }
-    fetchContents(filePath);
-    e.target.value = '';
   };
 
   const handleNewFile = () => {
@@ -237,21 +201,10 @@ export default function FileBrowser() {
             <Download className="size-3.5" />
             Pull
           </Button>
-          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => uploadRef.current?.click()}>
-            <Upload className="size-3.5" />
-            Upload
-          </Button>
           <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setNewFileOpen(true)}>
             <Plus className="size-3.5" />
             New File
           </Button>
-          <input
-            ref={uploadRef}
-            type="file"
-            multiple
-            className="hidden"
-            onChange={handleUpload}
-          />
         </div>
       </div>
 

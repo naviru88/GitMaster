@@ -77,8 +77,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
   const selectedBranch = useAppStore((s) => s.selectedBranch);
   const filePath = useAppStore((s) => s.filePath);
 
-  const folderRef = useRef<HTMLInputElement>(null);
-  const filesRef = useRef<HTMLInputElement>(null);
   const gitignoreFileRef = useRef<HTMLInputElement>(null);
 
   const [rawFiles, setRawFiles] = useState<FileItem[]>([]);
@@ -114,13 +112,11 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
     return {
       included: rawFiles.filter((f) => {
         const rp = getRelativePath(f);
-        // If user force-included this file, treat as included
         if (forceIncludes.has(rp)) return true;
         return incSet.has(rp);
       }),
       excluded: rawFiles.filter((f) => {
         const rp = getRelativePath(f);
-        // If user force-included this file, don't show as excluded
         if (forceIncludes.has(rp)) return false;
         return excSet.has(rp);
       }),
@@ -146,42 +142,37 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
 
   const handleFolderSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const list = e.target.files;
-    if (!list) return;
+    if (!list || list.length === 0) return;
     const items: FileItem[] = [];
     for (let i = 0; i < list.length; i++) {
       const f = list[i];
-      items.push({
-        name: f.name,
-        relativePath: (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name,
-        size: f.size,
-        file: f,
-      });
+      const relPath = (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name;
+      items.push({ name: f.name, relativePath: relPath, size: f.size, file: f });
     }
     setRawFiles(items);
     setForceIncludes(new Set());
     if (!commitMessage) {
       setCommitMessage(`Push ${items.length} files from local folder`);
     }
+    // Reset so the same folder can be re-selected
+    e.target.value = '';
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const list = e.target.files;
-    if (!list) return;
+    if (!list || list.length === 0) return;
     const items: FileItem[] = [];
     for (let i = 0; i < list.length; i++) {
       const f = list[i];
-      items.push({
-        name: f.name,
-        relativePath: f.name,
-        size: f.size,
-        file: f,
-      });
+      items.push({ name: f.name, relativePath: f.name, size: f.size, file: f });
     }
     setRawFiles(items);
     setForceIncludes(new Set());
     if (!commitMessage) {
       setCommitMessage(`Add ${items.length} file(s)`);
     }
+    // Reset so same files can be re-selected
+    e.target.value = '';
   };
 
   const handleGitignoreFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -195,7 +186,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
       toast.success(`Loaded .gitignore from ${file.name}`);
     };
     reader.readAsText(file);
-    // Reset input so same file can be re-selected
     e.target.value = '';
   };
 
@@ -306,40 +296,34 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
         </DialogHeader>
 
         <div className="flex flex-col gap-4 overflow-y-auto flex-1 min-h-0">
-          {/* File selection buttons */}
+          {/* File selection — use <label> wrapping <input> for maximum browser compatibility */}
           <div className="flex gap-2">
-            <Button
-              variant="outline"
-              className="flex-1 gap-2"
-              onClick={() => folderRef.current?.click()}
-              disabled={pushing}
-            >
-              <FolderUp className="size-4" />
-              Select Folder
-            </Button>
-            <Button
-              variant="outline"
-              className="flex-1 gap-2"
-              onClick={() => filesRef.current?.click()}
-              disabled={pushing}
-            >
-              <Upload className="size-4" />
-              Select Files
-            </Button>
-            <input
-              ref={folderRef}
-              type="file"
-              {...({ webkitdirectory: '', directory: '' } as Record<string, string>)}
-              className="hidden"
-              onChange={handleFolderSelect}
-            />
-            <input
-              ref={filesRef}
-              type="file"
-              multiple
-              className="hidden"
-              onChange={handleFileSelect}
-            />
+            <label className="flex-1">
+              <input
+                type="file"
+                {...({ webkitdirectory: '', directory: '' } as Record<string, string>)}
+                className="sr-only"
+                onChange={handleFolderSelect}
+                disabled={pushing}
+              />
+              <div className="flex items-center justify-center gap-2 h-9 rounded-md border border-input bg-background px-3 text-sm font-medium ring-offset-background cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors">
+                <FolderUp className="size-4" />
+                Select Folder
+              </div>
+            </label>
+            <label className="flex-1">
+              <input
+                type="file"
+                multiple
+                className="sr-only"
+                onChange={handleFileSelect}
+                disabled={pushing}
+              />
+              <div className="flex items-center justify-center gap-2 h-9 rounded-md border border-input bg-background px-3 text-sm font-medium ring-offset-background cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors">
+                <Upload className="size-4" />
+                Select Files
+              </div>
+            </label>
           </div>
 
           {/* .gitignore section */}
@@ -369,16 +353,20 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                 <div className="flex items-center gap-2">
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 text-xs gap-1"
-                        onClick={() => gitignoreFileRef.current?.click()}
-                        disabled={pushing}
-                      >
-                        <UploadCloud className="size-3" />
-                        Load File
-                      </Button>
+                      <label className="cursor-pointer">
+                        <input
+                          ref={gitignoreFileRef}
+                          type="file"
+                          accept=".gitignore"
+                          className="sr-only"
+                          onChange={handleGitignoreFileUpload}
+                          disabled={pushing}
+                        />
+                        <span className="flex items-center gap-1 h-7 text-xs text-muted-foreground hover:text-foreground px-2 py-1 rounded-md hover:bg-accent transition-colors">
+                          <UploadCloud className="size-3" />
+                          Load File
+                        </span>
+                      </label>
                     </TooltipTrigger>
                     <TooltipContent>Upload a .gitignore file from your machine</TooltipContent>
                   </Tooltip>
@@ -406,19 +394,15 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                         onClick={() => setShowExcluded((v) => !v)}
                       >
                         {showExcluded ? (
-                          <>
-                            <EyeOff className="size-3" /> Hide
-                          </>
+                          <><EyeOff className="size-3" /> Hide</>
                         ) : (
-                          <>
-                            <Eye className="size-3" /> Show
-                          </>
+                          <><Eye className="size-3" /> Show</>
                         )}
                       </button>
                     </div>
                   )}
 
-                  {/* Excluded files list (collapsible) */}
+                  {/* Excluded files list */}
                   {showExcluded && excluded.length > 0 && (
                     <ScrollArea className="max-h-28 mb-2">
                       <div className="divide-y rounded border bg-destructive/5">
@@ -436,24 +420,15 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                                 className="size-3.5"
                               />
                               <FileText className="size-3 text-muted-foreground shrink-0" />
-                              <span className="flex-1 truncate font-mono" title={rp}>
-                                {rp}
-                              </span>
-                              <span className="text-muted-foreground shrink-0">
-                                {formatSize(f.size)}
-                              </span>
+                              <span className="flex-1 truncate font-mono" title={rp}>{rp}</span>
+                              <span className="text-muted-foreground shrink-0">{formatSize(f.size)}</span>
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <button
                                     onClick={() => toggleForceInclude(rp)}
                                     className="text-muted-foreground hover:text-green-600 transition-colors"
-                                    title={isForced ? 'Re-exclude this file' : 'Include this file despite .gitignore'}
                                   >
-                                    {isForced ? (
-                                      <ShieldOff className="size-3" />
-                                    ) : (
-                                      <ShieldCheck className="size-3" />
-                                    )}
+                                    {isForced ? <ShieldOff className="size-3" /> : <ShieldCheck className="size-3" />}
                                   </button>
                                 </TooltipTrigger>
                                 <TooltipContent>
@@ -513,14 +488,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                   .gitignore filtering is disabled. All selected files will be pushed.
                 </p>
               )}
-
-              <input
-                ref={gitignoreFileRef}
-                type="file"
-                accept=".gitignore"
-                className="hidden"
-                onChange={handleGitignoreFileUpload}
-              />
             </div>
           )}
 
@@ -532,9 +499,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                   <FileCheck2 className="size-3.5 text-green-600" />
                   {included.length} file(s) to push
                   {excluded.length > 0 && gitignoreEnabled && (
-                    <span className="text-orange-500">
-                      {' '}({excluded.length} excluded)
-                    </span>
+                    <span className="text-orange-500"> ({excluded.length} excluded)</span>
                   )}
                 </span>
                 <span>{formatSize(totalSize)}</span>

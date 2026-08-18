@@ -309,3 +309,23 @@ Stage Summary:
 - Push files should now work for any file size and any number of files
 - No external dependencies for gitignore parsing (pure TypeScript)
 - Server accepts up to 50MB request bodies for batch operations
+
+---
+Task ID: 17
+Agent: Main Agent
+Task: Fix file picker buttons not working, remove Upload button
+
+Work Log:
+- Root cause: PushFolderDialog used `ref.click()` on hidden `<input type="file">` elements to open file pickers. This programmatic click gets blocked in sandboxed iframes (preview panel) because it's not a direct user gesture.
+- Fix: Replaced Button+hiddenInput+ref.click() pattern with native `<label>` wrapping `<input className="sr-only">`. Clicking the label directly activates the file input — no JavaScript needed, works in all environments including sandboxed iframes.
+- Also changed the .gitignore "Load File" button from ref.click() to the same label-wrapping pattern.
+- Added `e.target.value = ''` reset after file selection so same files/folder can be re-selected.
+- Removed the "Upload" button from FileBrowser toolbar (per user request).
+- Removed the entire `handleUpload` function and `uploadRef` from FileBrowser.
+- Removed unused `Upload` icon and `useRef` imports from FileBrowser.
+- Lint passes clean.
+
+Stage Summary:
+- File picker buttons now work reliably via native label-for-input association
+- Upload button removed from toolbar (Push Folder replaces it)
+- Toolbar now shows: Push Folder, Pull, New File
