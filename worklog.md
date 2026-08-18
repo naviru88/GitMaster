@@ -259,3 +259,34 @@ Stage Summary:
 - Batch Push: select folder/files → commit message → single commit with all files (replaces git add/commit/push)
 - Pull: select branch → download zip/tar.gz (replaces git clone/pull)
 - Both features fully integrated into FileBrowser toolbar
+
+---
+Task ID: 15
+Agent: Main Agent
+Task: Add .gitignore support to batch Push feature
+
+Work Log:
+- Installed `ignore` npm package (v7.0.6) — standard gitignore parser, works client-side
+- Created src/lib/gitignore.ts utility:
+  - createGitignoreMatcher(content) — parses .gitignore content into an Ignore instance
+  - filterByGitignore(paths, content) — returns { included, excluded } arrays
+  - DEFAULT_GITIGNORE_PATTERNS — built-in defaults (node_modules/, .git/, .DS_Store, Thumbs.db, *.log)
+- Rewrote PushFolderDialog with full .gitignore integration:
+  - Auto-detects .gitignore file in selected folder (reads content, marks as 'auto-detected')
+  - "Load File" button to manually upload a .gitignore file
+  - Toggle switch to enable/disable gitignore filtering
+  - Real-time filtering with useMemo — files split into included/excluded lists
+  - Excluded files section with count, total size saved, show/hide toggle
+  - Force-include per-file via checkbox or shield icon (overrides .gitignore for specific files)
+  - "Edit .gitignore rules" collapsible textarea to modify patterns inline
+  - Default rules applied when no .gitignore is detected (with prompt to upload)
+  - Empty state when all files are excluded (suggests force-include or disable)
+  - Push button shows filtered count ("Push N File(s)")
+  - Success toast mentions excluded count
+- Lint passes clean
+
+Stage Summary:
+- .gitignore filtering is now built into the Push Folder dialog
+- Supports auto-detection, manual upload, inline editing, per-file override, and disable toggle
+- Default rules cover common exclusions (node_modules, .git, OS files, logs)
+- Files are filtered client-side before sending to API — no wasted bandwidth
