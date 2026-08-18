@@ -120,6 +120,30 @@ export const github = {
     merge: (accountId: string, owner: string, repo: string, base: string, head: string, message?: string) =>
       post<GitHubMergeResult>(`/github/merge?accountId=${accountId}`, { owner, repo, base, head, message }),
   },
+
+  // -------- Push (batch commit) --------
+  push: {
+    batch: (
+      accountId: string, owner: string, repo: string, branch: string,
+      files: Array<{ path: string; content: string; isBase64: boolean }>,
+      message: string, basePath?: string,
+    ) =>
+      post<{ success: boolean; sha: string; filesCommitted: number }>(
+        `/github/push?accountId=${accountId}`,
+        { owner, repo, branch, files, message, basePath },
+      ),
+  },
+
+  // -------- Pull (archive download) --------
+  pull: {
+    download: (accountId: string, owner: string, repo: string, ref: string, format?: 'zip' | 'tar.gz') => {
+      const params = new URLSearchParams({ accountId, owner, repo, ref, format: format || 'zip' });
+      return fetch(`${BASE}/github/pull?${params.toString()}`).then((r) => {
+        if (!r.ok) throw new Error('Failed to download archive');
+        return r.blob();
+      });
+    },
+  },
 };
 
 // -------- AI --------

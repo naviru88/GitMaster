@@ -10,11 +10,15 @@ import {
   Image as ImageIcon,
   Upload,
   Plus,
+  FolderUp,
+  Download,
 } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 import { github } from '@/services/api';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import PushFolderDialog from './PushFolderDialog';
+import PullDialog from './PullDialog';
 import {
   Table,
   TableBody,
@@ -75,6 +79,8 @@ export default function FileBrowser() {
   const [loading, setLoading] = useState(false);
   const [newFileOpen, setNewFileOpen] = useState(false);
   const [newFileName, setNewFileName] = useState('');
+  const [pushOpen, setPushOpen] = useState(false);
+  const [pullOpen, setPullOpen] = useState(false);
   const uploadRef = useRef<HTMLInputElement>(null);
 
   const fetchContents = useCallback(async (path: string) => {
@@ -217,7 +223,15 @@ export default function FileBrowser() {
             })}
           </BreadcrumbList>
         </Breadcrumb>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setPushOpen(true)}>
+            <FolderUp className="size-3.5" />
+            Push Folder
+          </Button>
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setPullOpen(true)}>
+            <Download className="size-3.5" />
+            Pull
+          </Button>
           <Button variant="outline" size="sm" className="gap-1.5" onClick={() => uploadRef.current?.click()}>
             <Upload className="size-3.5" />
             Upload
@@ -285,6 +299,14 @@ export default function FileBrowser() {
           </TableBody>
         </Table>
       )}
+
+      {/* Push / Pull dialogs */}
+      <PushFolderDialog
+        open={pushOpen}
+        onOpenChange={setPushOpen}
+        onSuccess={() => fetchContents(filePath)}
+      />
+      <PullDialog open={pullOpen} onOpenChange={setPullOpen} />
 
       {/* New file dialog */}
       <Dialog open={newFileOpen} onOpenChange={setNewFileOpen}>

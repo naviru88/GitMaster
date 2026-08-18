@@ -114,14 +114,8 @@ export async function getFile(token: string | undefined, owner: string, repo: st
 
 export async function createOrUpdateFile(
   token: string | undefined,
-  owner: string,
-  repo: string,
-  path: string,
-  content: string,
-  message: string,
-  sha?: string,
-  branch?: string,
-  isBase64?: boolean,
+  owner: string, repo: string, path: string, content: string, message: string,
+  sha?: string, branch?: string, isBase64?: boolean,
 ) {
   const body: Record<string, unknown> = {
     message,
@@ -137,13 +131,8 @@ export async function createOrUpdateFile(
 }
 
 export async function deleteFile(
-  token: string | undefined,
-  owner: string,
-  repo: string,
-  path: string,
-  message: string,
-  sha: string,
-  branch?: string,
+  token: string | undefined, owner: string, repo: string, path: string, message: string,
+  sha: string, branch?: string,
 ) {
   const body: Record<string, unknown> = { message, sha };
   if (branch) body.branch = branch;
@@ -170,10 +159,7 @@ export async function createBranch(token: string | undefined, owner: string, rep
   return ghFetch<{ ref: string; object: { sha: string } }>(
     `${GITHUB_API}/repos/${owner}/${repo}/git/refs`,
     token,
-    {
-      method: 'POST',
-      body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: fromSha }),
-    },
+    { method: 'POST', body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: fromSha }) },
   );
 }
 
@@ -186,24 +172,13 @@ export async function getBranchSha(token: string | undefined, owner: string, rep
 
 // -------- Merge --------
 export async function mergeBranches(
-  token: string | undefined,
-  owner: string,
-  repo: string,
-  base: string,
-  head: string,
+  token: string | undefined, owner: string, repo: string, base: string, head: string,
   commitMessage?: string,
 ) {
   return ghFetch<import('@/types').GitHubMergeResult>(
     `${GITHUB_API}/repos/${owner}/${repo}/merges`,
     token,
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        base,
-        head,
-        commit_message: commitMessage || `Merge ${head} into ${base}`,
-      }),
-    },
+    { method: 'POST', body: JSON.stringify({ base, head, commit_message: commitMessage || `Merge ${head} into ${base}` }) },
   );
 }
 
@@ -220,11 +195,93 @@ export async function listCommits(token: string | undefined, owner: string, repo
 // -------- Compare --------
 export async function compareCommits(token: string | undefined, owner: string, repo: string, base: string, head: string) {
   return ghFetch<{
-    status: string;
-    ahead_by: number;
-    behind_by: number;
-    total_commits: number;
+    status: string; ahead_by: number; behind_by: number; total_commits: number;
     commits: import('@/types').GitHubCommit[];
     files?: Array<{ filename: string; status: string; additions: number; deletions: number; changes: number }>;
   }>(`${GITHUB_API}/repos/${owner}/${repo}/compare/${base}...${head}`, token);
+}
+
+// -------- Batch Commit (Git Trees API) --------
+// Creates a single commit with multiple file changes — equivalent to git add . && git commit && git push
+
+interface BlobResult { sha: string; path: string; mode: string; type: string; }
+
+export async function batchCommit(
+  token: string,
+  owner: string,
+  repo: string,
+  branch: string,
+  files: Array<{ path: string; content: string; isBase64: boolean }>,
+  message: string,
+  basePath: string = '',
+) {
+  // 1. Get current branch tip SHA
+  const ref = await ghFetch<{ object: { sha: string } }>(
+    `${GITHUB_API}/repos/${owner}/${repo}/git/ref/heads/${branch}`,
+    token,
+  );
+  const baseTreeSha = ref.object.sha;
+
+  // 2. Create blobs for all files
+  const blobs: BlobResult[] = [];
+  for (const file of files) {
+    const full = basePath ? `${basePath}/${file.path}` : file.path;
+    const blob = await ghFetch<{ sha: string }>(
+      `${GITHUB_API}/repos/${owner}/${repo}/git/blobs`,
+      token,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          content: file.isBase64 ? file.content : file.content,
+          encoding: file.isBase64 ? 'base64' : 'utf-8',
+        }),
+      },
+    );
+    blobs.push({ sha: blob.sha, path: full, mode: '100644', type: 'blob' });
+  }
+
+  // 3. Create a new tree with all blobs
+  const tree = await ghFetch<{ sha: string }>(
+    `${GITHUB_API}/repos/${owner}/${repo}/git/trees`,
+    token,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        base_tree: baseTreeSha,
+        tree: blobs.map((b) => ({ path: b.path, mode: b.mode, type: b.type, sha: b.sha })),
+      }),
+    },
+  );
+
+  // 4. Create a commit pointing to the new tree
+  const commit = await ghFetch<{ sha: string }>(
+    `${GITHUB_API}/repos/${owner}/${repo}/git/commits`,
+    token,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        message,
+        tree: tree.sha,
+        parents: [baseTreeSha],
+      }),
+    },
+  );
+
+  // 5. Update the branch reference
+  await ghFetch<{ object: { sha: string } }>(
+    `${GITHUB_API}/repos/${owner}/${repo}/git/refs/heads/${branch}`,
+    token,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ sha: commit.sha }),
+    },
+  );
+
+  return { sha: commit.sha, fileCount: blobs.length };
+}
+
+// -------- Archive (Pull / Clone) --------
+// Returns the download URL for a repo archive (zip or tar.gz)
+export function getArchiveUrl(owner: string, repo: string, ref: string, format: 'zipball' | 'tarball' = 'zipball') {
+  return `${GITHUB_API}/repos/${owner}/${repo}/${format}/${ref}`;
 }

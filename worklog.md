@@ -219,3 +219,43 @@ Stage Summary:
 - Login/Register UI with smooth animations
 - User info and sign-out button in sidebar and header
 - All tests pass via automated curl verification
+
+---
+Task ID: 14
+Agent: Main Agent
+Task: Add batch Push (git add/commit/push) and Pull (git clone) features
+
+Work Log:
+- Added Git Trees API functions to github.ts: batchCommit() creates a single commit with multiple file changes
+  - Uses GitHub Git Data API: getRef → createBlobs → createTree → createCommit → updateRef
+  - Equivalent to `git add . && git commit -m "msg" && git push`
+  - Supports basePath for pushing to subdirectories
+- Added getArchiveUrl() for pull/clone functionality
+- Created /api/github/push/route.ts: POST endpoint accepting files array, commit message, branch, basePath
+  - Requires auth and account ownership
+  - Validates max 200 files per batch
+  - Limits: files up to 100MB via GitHub blob API
+- Created /api/github/pull/route.ts: GET endpoint proxying GitHub archive download
+  - Supports zip and tar.gz formats
+  - Sets Content-Disposition header for browser download
+  - Auth-protected, account-scoped
+- Updated services/api.ts: added push.batch() and pull.download() methods
+- Created PushFolderDialog component:
+  - Folder picker (webkitdirectory) and file picker
+  - File list with sizes, remove buttons
+  - Commit message input with auto-generated default
+  - Progress bar (reading files 0-70%, committing 70-100%)
+  - Files pushed to current branch at current directory path
+- Created PullDialog component:
+  - Branch selector dropdown (populated from store)
+  - Format toggle (zip recommended, tar.gz option)
+  - Downloads archive with proper filename
+  - Description explains git clone/pull equivalence
+- Updated FileBrowser: added Push Folder and Pull buttons before Upload/New File
+- All routes verified: push returns 404 for invalid account (auth+scoping working), pull returns 404
+- Lint passes clean
+
+Stage Summary:
+- Batch Push: select folder/files → commit message → single commit with all files (replaces git add/commit/push)
+- Pull: select branch → download zip/tar.gz (replaces git clone/pull)
+- Both features fully integrated into FileBrowser toolbar
