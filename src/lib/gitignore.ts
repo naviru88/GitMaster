@@ -4,7 +4,7 @@
  * directory patterns (trailing /), negation (!), and comments (#).
  */
 
-interface Pattern {
+export interface Pattern {
   regex: RegExp;
   negative: boolean;
   dirOnly: boolean;
@@ -162,6 +162,34 @@ export function filterByGitignore(
   }
 
   return { included, excluded };
+}
+
+/**
+ * Decide whether a *directory itself* (not a file inside it) should be
+ * pruned — i.e. never descended into at all while walking a dropped folder.
+ *
+ * This is deliberately separate from filterByGitignore's per-file matching:
+ * that function skips `dirOnly` patterns when the tested path has no `/`,
+ * because for a *file* path that's the only cheap signal that a segment
+ * upstream is a directory. But here the path IS a directory — a top-level
+ * folder like "node_modules" must still match a `node_modules/` pattern
+ * even though its own relative path contains no slash. Applying the file
+ * heuristic here would silently defeat pruning for every top-level ignored
+ * directory, which is precisely the common case (node_modules, dist, .git).
+ *
+ * Matches real git's own behavior: once a directory is ignored, its
+ * contents are never inspected, so a negated (`!`) rule for something
+ * *inside* an ignored directory intentionally has no effect here.
+ */
+export function shouldIgnoreDir(dirPath: string, patterns: Pattern[]): boolean {
+  const normalized = dirPath.replace(/\\/g, '/');
+  let ignored = false;
+  for (const { regex, negative } of patterns) {
+    if (regex.test(normalized)) {
+      ignored = !negative;
+    }
+  }
+  return ignored;
 }
 
 /**

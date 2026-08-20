@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 import { github } from '@/services/api';
-import { filterByGitignore, DEFAULT_GITIGNORE_PATTERNS } from '@/lib/gitignore';
+import { filterByGitignore, parseGitignore, shouldIgnoreDir, DEFAULT_GITIGNORE_PATTERNS, type Pattern } from '@/lib/gitignore';
 import {
   Dialog,
   DialogContent,
@@ -133,6 +133,20 @@ function readEntryAsFile(entry: FileSystemFileEntry): Promise<File> {
   return new Promise((resolve, reject) => entry.file(resolve, reject));
 }
 
+/** Read a FileSystemFileEntry directly as text (used for eagerly reading a
+ * root .gitignore before the main walk, so we don't need to round-trip
+ * through a File + a second FileReader call at the caller). */
+function readEntryAsText(entry: FileSystemFileEntry): Promise<string> {
+  return new Promise((resolve, reject) => {
+    entry.file((file) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve((e.target?.result as string) ?? '');
+      reader.onerror = () => reject(reader.error || new Error('Could not read .gitignore'));
+      reader.readAsText(file);
+    }, reject);
+  });
+}
+
 /** FileSystemDirectoryReader.readEntries only returns up to ~100 entries per
  * call in Chromium browsers, so it must be called repeatedly until it
  * returns an empty array. */
@@ -140,17 +154,60 @@ function readDirectoryEntries(reader: FileSystemDirectoryReader): Promise<FileSy
   return new Promise((resolve, reject) => reader.readEntries(resolve, reject));
 }
 
+/** Before the real (potentially huge) recursive walk begins, look for a
+ * project-root .gitignore so directory pruning below can use the real
+ * rules from the very first directory it considers descending into,
+ * instead of only the generic defaults. Checks two places, cheaply:
+ *  1. A .gitignore dropped directly (alongside other loose files).
+ *  2. One level inside each dropped directory — the common case, since
+ *     dropping "my-project/" means my-project/.gitignore is one level down.
+ * Deliberately does NOT recurse further than that: nested .gitignore files
+ * are out of scope here, same as before this change (the existing
+ * post-selection auto-detect effect still catches those separately). */
+async function findRootGitignoreContent(entries: FileSystemEntry[]): Promise<string | null> {
+  for (const entry of entries) {
+    if (entry.isFile && entry.name === '.gitignore') {
+      return readEntryAsText(entry as FileSystemFileEntry);
+    }
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory) continue;
+    const reader = (entry as FileSystemDirectoryEntry).createReader();
+    let children: FileSystemEntry[] = [];
+    while (true) {
+      const batch = await readDirectoryEntries(reader);
+      if (batch.length === 0) break;
+      children = children.concat(batch);
+    }
+    const gi = children.find((c) => c.isFile && c.name === '.gitignore');
+    if (gi) return readEntryAsText(gi as FileSystemFileEntry);
+  }
+  return null;
+}
+
 /** Recursively walk a dropped FileSystemEntry (file or directory) and push
  * every file found into `collected`, preserving folder structure via
  * `entry.fullPath` (which is what makes drag-and-drop able to replicate
  * "Select Folder" without going through the native file picker at all).
+ *
+ * Directories are pruned — never descended into, their contents never
+ * read — the moment they match either the hard `.git` block or the given
+ * .gitignore `patterns` (when provided). This mirrors how real `git`
+ * itself walks a working tree: an ignored directory's contents are simply
+ * never inspected. It's also what actually keeps a huge ignored directory
+ * (node_modules, .git, build output) from costing any scan time at all,
+ * versus discovering every file inside it and filtering afterward.
+ *
  * `onFileFound` fires as each file is discovered — this is what drives the
- * live "Scanning… found N files" indicator, since a large project (tens of
- * thousands of entries, e.g. node_modules) can take a real, visible amount
- * of time to walk with zero other feedback otherwise. */
+ * live "Scanning… found N files" indicator, since a large project can take
+ * a real, visible amount of time to walk with zero other feedback
+ * otherwise. `onDirPruned` fires once per skipped directory, with its
+ * relative path, so the caller can surface what got skipped and why. */
 async function collectFilesFromEntry(
   entry: FileSystemEntry,
   collected: FileItem[],
+  patterns: Pattern[] | null,
+  onDirPruned?: (relPath: string) => void,
   onFileFound?: () => void,
 ): Promise<void> {
   if (entry.isFile) {
@@ -159,6 +216,23 @@ async function collectFilesFromEntry(
     collected.push({ name: file.name, relativePath: relPath, size: file.size, file });
     onFileFound?.();
   } else if (entry.isDirectory) {
+    const relPath = (entry.fullPath || `/${entry.name}`).replace(/^\//, '');
+
+    // Hard block: never descend into a .git directory, regardless of
+    // .gitignore state (see isBlockedGitPath for why this can't be
+    // overridden). Pruning it here — rather than discovering its contents
+    // and filtering them out later — is what actually avoids reading
+    // potentially large repo internals off disk at all.
+    if (isBlockedGitPath(relPath)) {
+      onDirPruned?.(relPath);
+      return;
+    }
+
+    if (patterns && shouldIgnoreDir(relPath, patterns)) {
+      onDirPruned?.(relPath);
+      return;
+    }
+
     const reader = (entry as FileSystemDirectoryEntry).createReader();
     let entries: FileSystemEntry[] = [];
     // Keep calling readEntries until it returns [] — a single call is not
@@ -169,7 +243,7 @@ async function collectFilesFromEntry(
       entries = entries.concat(batch);
     }
     for (const child of entries) {
-      await collectFilesFromEntry(child, collected, onFileFound);
+      await collectFilesFromEntry(child, collected, patterns, onDirPruned, onFileFound);
     }
   }
 }
@@ -195,6 +269,12 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
   // live "Scanning… found N files" indicator instead of the UI looking
   // frozen with no feedback at all.
   const [scanningCount, setScanningCount] = useState<number | null>(null);
+  // Directories skipped entirely during a drag-and-drop scan (never
+  // descended into, so their contents were never read). Accumulates across
+  // multiple drops into the same selection; only drag-and-drop can populate
+  // this — the native folder/file pickers hand back an already-flat list
+  // with no opportunity to prune before reading.
+  const [prunedDirs, setPrunedDirs] = useState<string[]>([]);
   const [commitMessage, setCommitMessage] = useState('');
 
   // Incremental processing state
@@ -456,6 +536,10 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
     setRawFiles(items);
     setForceIncludes(new Set());
     setInvalidFiles(new Map());
+    // A native picker replaces the whole selection with an already-flat
+    // list — nothing was pruned to get it, and any dirs pruned by an
+    // earlier drop no longer apply to what's now selected.
+    setPrunedDirs([]);
     notifySelection(items.length);
     e.target.value = '';
   };
@@ -471,6 +555,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
     setRawFiles(items);
     setForceIncludes(new Set());
     setInvalidFiles(new Map());
+    setPrunedDirs([]);
     notifySelection(items.length);
     e.target.value = '';
   };
@@ -513,6 +598,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
 
     const dt = e.dataTransfer;
     const collected: FileItem[] = [];
+    const prunedThisDrop: string[] = [];
 
     // Immediate feedback the moment the drop is registered — before any
     // traversal has happened yet, so there's never a silent gap.
@@ -531,21 +617,52 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
           const entry = item.webkitGetAsEntry();
           if (entry) entries.push(entry);
         }
-        for (const entry of entries) {
-          await collectFilesFromEntry(entry, collected, () => {
-            // Batch state updates roughly every 20 files instead of on
-            // every single one — thousands of individual re-renders during
-            // a big node_modules scan would itself slow things down.
-            if (collected.length - lastToastUpdate >= 20) {
-              lastToastUpdate = collected.length;
-              setScanningCount(collected.length);
+
+        // Look for a project .gitignore *before* the real walk starts, so
+        // directory pruning below can use the real rules from its very
+        // first decision instead of only the generic defaults. Only
+        // matters when filtering is on — with it off, nothing gets pruned
+        // by pattern anyway (only the hard .git block still applies).
+        let patterns: Pattern[] | null = null;
+        if (gitignoreEnabled) {
+          let effectiveContent = gitignoreContent;
+          try {
+            const found = await findRootGitignoreContent(entries);
+            if (found != null) {
+              effectiveContent = found;
+              setGitignoreSource('auto');
+              setGitignoreContent(found);
             }
-          });
+          } catch {
+            // Couldn't read it early — fall back to whatever rules were
+            // already active and let the normal post-selection detection
+            // effect try again once rawFiles updates.
+          }
+          patterns = parseGitignore(effectiveContent);
+        }
+
+        for (const entry of entries) {
+          await collectFilesFromEntry(
+            entry,
+            collected,
+            patterns,
+            (dirPath) => prunedThisDrop.push(dirPath),
+            () => {
+              // Batch state updates roughly every 20 files instead of on
+              // every single one — thousands of individual re-renders during
+              // a big node_modules scan would itself slow things down.
+              if (collected.length - lastToastUpdate >= 20) {
+                lastToastUpdate = collected.length;
+                setScanningCount(collected.length);
+              }
+            },
+          );
         }
       }
 
       // Fallback: flat file list only (no folder structure) — used if the
-      // browser doesn't support webkitGetAsEntry at all.
+      // browser doesn't support webkitGetAsEntry at all. There's no entry
+      // tree to prune here, so nothing to skip up front.
       if (collected.length === 0 && dt.files && dt.files.length > 0) {
         for (let i = 0; i < dt.files.length; i++) {
           const f = dt.files[i];
@@ -560,12 +677,17 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
 
     setScanningCount(null);
 
-    if (collected.length === 0) {
+    if (collected.length === 0 && prunedThisDrop.length === 0) {
       toast.error('No files found in what was dropped.');
       return;
     }
 
-    toast.success(`Found ${collected.length} file(s) — reading and caching now…`);
+    if (collected.length === 0) {
+      toast.info(`Everything in that drop matched .gitignore — ${prunedThisDrop.length} folder(s) skipped, nothing to add.`);
+    } else {
+      const prunedNote = prunedThisDrop.length > 0 ? ` (skipped ${prunedThisDrop.length} ignored folder(s))` : '';
+      toast.success(`Found ${collected.length} file(s)${prunedNote} — reading and caching now…`);
+    }
 
     // Merge into the existing selection: dropping more files/folders adds to
     // what's already selected, with a re-drop of the same path overwriting
@@ -577,7 +699,11 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
       return merged;
     });
     setForceIncludes(new Set());
-  }, [isProcessing, pushing]);
+
+    if (prunedThisDrop.length > 0) {
+      setPrunedDirs((prev) => Array.from(new Set([...prev, ...prunedThisDrop])));
+    }
+  }, [isProcessing, pushing, gitignoreEnabled, gitignoreContent]);
 
   const handleGitignoreFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -705,6 +831,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
   const resetState = () => {
     setStep('message');
     setRawFiles([]);
+    setPrunedDirs([]);
     setCommitMessage('');
     setPushProgress(0);
     setGitignoreSource('none');
@@ -867,6 +994,28 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                   <Loader2 className="size-4 animate-spin text-primary shrink-0" />
                   <span>Scanning folder… found <span className="font-medium">{scanningCount}</span> file(s) so far</span>
                 </div>
+              )}
+
+              {/* Directories skipped entirely during the drag-and-drop scan —
+                  these were never descended into, so their contents were
+                  never read off disk at all (unlike ordinary .gitignore
+                  exclusion, which still has to discover a file before it can
+                  filter it out). Only drag-and-drop can populate this. */}
+              {scanningCount === null && prunedDirs.length > 0 && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="flex items-start gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-xs cursor-default">
+                      <ShieldCheck className="size-3.5 text-green-600 shrink-0 mt-0.5" />
+                      <span className="text-muted-foreground">
+                        <span className="font-medium text-foreground">{prunedDirs.length}</span> folder(s) skipped entirely during scan (never read):{' '}
+                        <span className="font-mono">{prunedDirs.slice(0, 4).join(', ')}{prunedDirs.length > 4 ? `, +${prunedDirs.length - 4} more` : ''}</span>
+                      </span>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs">
+                    These matched .gitignore before their contents were ever scanned, so nothing inside them can be force-included or shown in the excluded list — same as real git. To include something from inside one, disable .gitignore filtering (or adjust the rules) before dropping the folder again.
+                  </TooltipContent>
+                </Tooltip>
               )}
 
               {/* File selection buttons */}
