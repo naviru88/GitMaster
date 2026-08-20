@@ -1,6 +1,6 @@
-# ChangelogAI
+# GitMaster
 
-> AI-powered release notes generator. Pull commits and PRs from any GitHub repo and turn them into structured, human-readable changelogs — with two distinct voices.
+> A self-hosted, browser-based GUI for pushing, pulling, and managing GitHub repositories — built to replace the terminal `git add / commit / push` workflow with drag-and-drop file uploads, automatic `.gitignore` handling, and a proper account manager for multiple GitHub identities.
 
 ![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?logo=typescript)
@@ -10,66 +10,72 @@
 
 ---
 
-## Overview
+## What it does
 
-ChangelogAI connects to any GitHub repository, pulls raw commit and PR history between two tags or refs, classifies changes into categories, and uses an LLM to generate polished release notes — all with a review/edit step before finalizing.
+GitMaster connects to GitHub's REST API on your behalf (using a Personal Access Token) and gives you a graphical way to do the things you'd normally reach for the terminal for:
 
-### The Two-Voice Edge
+- **Push** local files or entire folders to a repo, without a local git checkout
+- **Pull** a repo down as a `.zip` or `.tar.gz` archive
+- **Browse** repo contents, switch branches, and view commit history
+- **Merge** branches
+- **Manage multiple GitHub accounts** side by side (e.g. personal + work), each with its own token
+- Optionally, **generate commit messages and READMEs with AI** (see [AI Tools](#ai-tools--requires-setup) below — this one needs a bit of configuration)
 
-This is what makes ChangelogAI different. From the **same input data**, you can generate:
-
-| Voice | Audience | Style |
-|---|---|---|
-| 🛠️ **Developer** | Engineers | Terse, technical, includes PR numbers & SHAs, omits chores |
-| 📣 **Marketing** | End users | Plain language, benefit-framed, hides internal details |
+Everything runs through your own Next.js server talking directly to `api.github.com` — there's no third-party backend in between.
 
 ---
 
 ## Features
 
-### Repository Connection
-- Connect any **public** GitHub repository via URL
-- Optional **Personal Access Token** for private repos (higher rate limits)
-- Automatic repo validation and metadata fetch (name, description, stars)
+### Multi-account GitHub management
+- Connect any number of GitHub accounts via **Personal Access Token**, each with a label (e.g. "Personal", "Work")
+- Switch between accounts from the sidebar; each account's repos, branches, and tokens stay isolated
 
-### Smart Data Ingestion
-- Pull commits between any two tags, branches, or commit SHAs
-- Optionally include merged pull requests
-- Parses **conventional commit prefixes** (`feat:`, `fix:`, `chore:`, etc.)
-- Auto-classifies changes into 7 categories:
-  - ✨ Features
-  - 🐛 Bug Fixes
-  - ⚠️ Breaking Changes
-  - ⚡ Improvements
-  - 🔧 Chores/Internal
-  - 📝 Documentation
-  - ❓ Uncategorized
+### Repository browsing
+- List all repos for a connected account
+- Per-repo tabs for **Files**, **Branches**, and **Commits**
+- In-browser file viewer/editor for individual files
 
-### AI-Powered Draft Generation
-- LLM rewrites categorized raw changes into clean, structured release notes
-- Two distinct output voices (Developer / Marketing)
-- Category-aware prompts — chores hidden in marketing mode, technical details in developer mode
+### Push — the core feature
+This is the most heavily built-out part of the app, specifically designed to avoid the problems that come from uploading a raw folder through a browser:
 
-### Review & Edit
-- **Nothing auto-publishes** — every draft goes through a human review step
-- Split-pane markdown editor with live preview
-- Edit the AI-generated draft before publishing
-- Switch voice and regenerate from the same data
-- Auto-saves on blur
+- **Drag-and-drop** whole folders (recursively) or individual files directly onto the push dialog — no reliance on the OS's native file picker, which can be unreliable on some Linux/browser combinations
+- **Automatic `.gitignore` detection**: if a `.gitignore` file is found in what you selected, its rules are used automatically; otherwise sensible defaults apply (`node_modules/`, `.git/`, `.DS_Store`, `*.log`, etc.)
+- **`.git/` is always excluded**, unconditionally and non-overridably — GitHub's API rejects any path containing a `.git` component outright, so this is enforced regardless of your `.gitignore` settings, both client- and server-side
+- **Per-file validation failsafe**: corrupted/unreadable files or anything over GitHub's 100MB blob limit are automatically skipped (with a reason shown) instead of failing the entire push
+- **Live progress feedback** at every stage — folder scanning, file caching/encoding, and the actual GitHub upload each show their own progress, pinned to a fixed spot in the dialog so it's never hidden by scrolling
+- **Rate-limit aware**: automatically retries with backoff if GitHub's secondary (abuse-prevention) rate limit is hit, instead of failing the push outright
+- **Optimized upload path**: small text files are embedded directly into the Git tree in a single request rather than requiring a separate API call per file, which meaningfully cuts down the number of round-trips for a typical push (mostly source code)
+- No artificial cap on file count — GitHub's own Trees API doesn't have one either; only total payload size is guarded against
 
-### Export & Publish
-- **Copy to clipboard** as Markdown
-- **Download as `.md` file**
-- **Publish** to mark as final (appears in Running Changelog)
+### Pull
+- Download any branch of a repo as a `.zip` or `.tar.gz` archive directly to your machine
 
-### History
-- All changelogs stored per project in local database
-- View individual changelogs or the full **Running Changelog** (all published, reverse chronological)
-- Changelog metadata: version, date range, voice, status
+### Branches & Commits
+- View, switch, and merge branches
+- Browse commit history per repo
+
+### AI Tools — *requires setup*
+- A **commit message generator** and **README generator**, both AI-powered
+- ⚠️ **Out of the box these will not work.** They're wired up to `z-ai-web-dev-sdk`, an SDK tied to the specific cloud sandbox this project was originally scaffolded in — it has no API key of its own to configure and won't authenticate outside that environment. To use these features, replace the calls in `src/app/api/ai/commit-message/route.ts` and `src/app/api/ai/readme/route.ts` with a real LLM provider (e.g. the [Anthropic](https://docs.claude.com) or OpenAI SDK) and your own API key.
 
 ---
 
-## Tech Stack
+## Known limitations / leftover code
+
+This project was originally scaffolded from a different template app (a GitHub changelog generator) and repurposed into GitMaster. Some files from that original template are still present in the repo but **are not wired into the app's UI or database schema**, and will not work if invoked:
+
+- `src/components/layout/DashboardView.tsx`, `src/components/layout/ProjectView.tsx`
+- `src/components/wizard/NewChangelogWizard.tsx`
+- `src/components/changelog/*`
+- `src/components/github/NewProjectDialog.tsx`
+- The `/api/projects/*` and `/api/changelog/*` routes — these reference a `Project`/`Changelog` Prisma model that no longer exists in `prisma/schema.prisma` (only `User` and `Account` are defined)
+
+None of this is reachable from the real app (`src/app/page.tsx` only renders `DashboardView` from `src/components/dashboard/`, `AccountReposView`, `RepoDetailView`, `FileEditor`, and `AIToolsView`), so it doesn't affect normal use — but if you're exploring the codebase, don't be surprised to find it. Safe to delete if you want a cleaner tree.
+
+---
+
+## Tech stack
 
 | Layer | Technology |
 |---|---|
@@ -77,266 +83,103 @@ This is what makes ChangelogAI different. From the **same input data**, you can 
 | Language | TypeScript 5 |
 | Styling | Tailwind CSS 4 + shadcn/ui |
 | Database | Prisma ORM + SQLite |
-| State Management | Zustand |
-| Server Data | TanStack React Query |
-| AI | z-ai-web-dev-sdk (LLM) |
-| Animations | Framer Motion |
-| Icons | Lucide React |
-| Date Formatting | date-fns |
-| Markdown | react-markdown |
+| State management | Zustand |
+| Auth | Local email/password accounts, JWT sessions (`jose`), bcrypt-hashed passwords |
+| GitHub integration | Direct REST calls to `api.github.com` (no external proxy) |
 
 ---
 
-## Project Structure
+## Getting started
 
-```
-changelog-ai/
-├── prisma/
-│   └── schema.prisma          # Database models (Project, Changelog)
-├── src/
-│   ├── app/
-│   │   ├── page.tsx           # Single-page app entry (view router)
-│   │   ├── layout.tsx         # Root layout with fonts + metadata
-│   │   ├── globals.css        # Tailwind theme variables
-│   │   └── api/
-│   │       ├── projects/      # Project CRUD endpoints
-│   │       ├── github/        # GitHub proxy (validate, tags, fetch)
-│   │       └── changelog/     # Generate + edit changelog endpoints
-│   ├── components/
-│   │   ├── layout/            # AppLayout, Dashboard, Project views
-│   │   ├── wizard/            # 4-step NewChangelogWizard
-│   │   ├── changelog/         # ViewChangelog, EditChangelog
-│   │   ├── github/            # NewProjectDialog
-│   │   ├── ui/                # shadcn/ui components
-│   │   └── providers.tsx      # React Query provider
-│   ├── lib/
-│   │   ├── github.ts          # GitHub REST API service
-│   │   ├── parser.ts          # URL parser + conventional commit extractor
-│   │   ├── classifier.ts      # Rule-based change categorization
-│   │   ├── draft.ts           # LLM draft generation
-│   │   ├── db.ts              # Prisma client singleton
-│   │   └── prompts/           # LLM prompt templates
-│   │       ├── developer.ts   # Technical voice prompt
-│   │       └── marketing.ts   # User-facing voice prompt
-│   ├── services/
-│   │   └── api.ts             # Typed API client (fetch-based)
-│   ├── store/
-│   │   └── appStore.ts        # Zustand global state
-│   ├── types/
-│   │   └── index.ts           # Shared TypeScript types + constants
-│   └── hooks/                 # Custom React hooks
-├── .env.example              # Environment variable template
-├── .gitignore
-├── package.json
-├── tsconfig.json
-└── next.config.ts
-```
-
----
-
-## Getting Started
-
-### Prerequisites
-
-- **Node.js** 18+ or **Bun** (recommended)
-- A **GitHub Personal Access Token** (optional, for private repos or higher rate limits)
-
-### Installation
+### 1. Install dependencies
 
 ```bash
-# Clone the repository
-git clone https://github.com/naviru88/changelog-ai.git
-cd changelog-ai
-
-# Install dependencies
 npm install
-# or: bun install
+```
 
-# Set up environment variables
-cp .env.example .env.local
+### 2. Configure environment variables
 
-# Initialize the database
-npx prisma db push
+Create a `.env` file in the project root:
 
-# Start the development server
+```env
+DATABASE_URL="file:./db/custom.db"
+JWT_SECRET="replace-with-any-long-random-string"
+```
+
+Both are required. `DATABASE_URL` **must be a relative path** (`file:./db/custom.db`) — an absolute path baked in from a different machine/environment will fail with a permissions or "unable to open database file" error.
+
+### 3. Set up the database
+
+```bash
+npm run db:push
+```
+
+This creates `db/custom.db` and applies the schema (`User`, `Account` tables) via Prisma.
+
+### 4. Run the dev server
+
+```bash
 npm run dev
-# or: bun run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+The app runs at **http://localhost:3000**.
 
-### Environment Variables
+### 5. Create an account and connect GitHub
 
-| Variable | Description | Default |
-|---|---|---|
-| `DATABASE_URL` | SQLite database path | `file:./dev.db` |
-
-> GitHub tokens are entered **per-project in the UI**, not as environment variables. This is by design — no global secrets to manage.
-
----
-
-## Usage
-
-### 1. Connect a Repository
-
-Click **"New Project"** in the sidebar, enter a GitHub URL (e.g., `https://github.com/facebook/react`), and optionally add a Personal Access Token for private repos.
-
-### 2. Generate a Changelog
-
-From the project page, click **"Generate New Changelog"** and follow the 4-step wizard:
-
-| Step | Action |
-|---|---|
-| **1. Connect** | (Skipped if project already selected) |
-| **2. Select Range** | Pick two tags, branches, or manually enter any git ref |
-| **3. Choose Voice** | Select Developer 🛠️ or Marketing 📣, review category breakdown |
-| **4. Review & Edit** | Edit the AI-generated draft in a split-pane editor |
-
-### 3. Export or Publish
-
-- **Copy** the Markdown to your clipboard
-- **Download** as a `.md` file
-- **Publish** to mark as final and add to the running changelog
-
----
-
-## API Endpoints
-
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/api/projects` | List all projects |
-| `POST` | `/api/projects` | Create project (validates repo via GitHub) |
-| `GET` | `/api/projects/:id` | Get single project |
-| `DELETE` | `/api/projects/:id` | Delete project and all changelogs |
-| `GET` | `/api/projects/:id/changelogs` | List changelogs for project |
-| `POST` | `/api/github/validate` | Validate GitHub repo access |
-| `GET` | `/api/github/tags` | Fetch version tags for a repo |
-| `POST` | `/api/github/fetch` | Fetch & classify changes between two refs |
-| `POST` | `/api/changelog/generate` | Full pipeline: fetch → classify → LLM draft → save |
-| `GET` | `/api/changelog/:id` | Get single changelog |
-| `PUT` | `/api/changelog/:id` | Update draft markdown, status, or version |
-
----
-
-## How It Works
-
-```
-GitHub Repo
-    │
-    ▼
-┌─────────────┐     ┌──────────────┐     ┌──────────────┐
-│  Fetch API  │────▶│    Parser    │────▶│  Classifier  │
-│ (commits,   │     │ (conventional│     │ (rule-based  │
-│  PRs, tags) │     │  prefixes)   │     │  categories) │
-└─────────────┘     └──────────────┘     └──────┬───────┘
-                                               │
-                                               ▼
-                                        ┌──────────────┐
-                                        │  Categorized │
-                                        │   Changes     │
-                                        └──────┬───────┘
-                                               │
-                              ┌────────────────┼────────────────┐
-                              ▼                                  ▼
-                       ┌─────────────┐                   ┌─────────────┐
-                       │  Developer   │                   │  Marketing  │
-                       │  Prompt      │                   │  Prompt     │
-                       └──────┬──────┘                   └──────┬──────┘
-                              │                                  │
-                              ▼                                  ▼
-                       ┌─────────────┐                   ┌─────────────┐
-                       │    LLM      │                   │    LLM      │
-                       │  (z-ai-sdk) │                   │  (z-ai-sdk) │
-                       └──────┬──────┘                   └──────┬──────┘
-                              └────────────┬──────────────────┘
-                                           ▼
-                                   ┌──────────────┐
-                                   │  Draft       │
-                                   │  Markdown    │
-                                   └──────┬───────┘
-                                          │
-                                          ▼
-                                   ┌──────────────┐
-                                   │  Review &    │
-                                   │  Edit (human)│
-                                   └──────┬───────┘
-                                          │
-                                          ▼
-                                   ┌──────────────┐
-                                   │  Export /    │
-                                   │  Publish     │
-                                   └──────────────┘
-```
-
----
-
-## Database Schema
-
-```prisma
-model Project {
-  id          String      @id @default(cuid())
-  name        String
-  owner       String
-  repo        String
-  githubUrl   String
-  description String?
-  accessToken String?       // Encrypted in production
-  stars       Int         @default(0)
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
-  changelogs  Changelog[]
-}
-
-model Changelog {
-  id            String   @id @default(cuid())
-  projectId     String
-  version       String?
-  fromRef       String
-  toRef         String
-  voice         String   @default("developer")
-  status        String   @default("draft")
-  rawChanges    String   // JSON: categorized changes
-  draftMarkdown String   // Editable draft
-  finalMarkdown String?  // Published version
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-}
-```
+Sign up on first load (this creates a local `User` row), then add a GitHub account from within the app using a **Personal Access Token** (classic or fine-grained, with `repo` scope). That token is what powers push/pull/branch/commit operations — it's stored per-account in the local database.
 
 ---
 
 ## Scripts
 
-```bash
-npm run dev          # Start dev server on port 3000
-npm run lint         # Run ESLint
-npm run db:push      # Push schema to database
-npm run db:generate  # Generate Prisma client
-npm run db:migrate   # Run database migrations
-npm run db:reset      # Reset database
+| Command | Description |
+|---|---|
+| `npm run dev` | Start the dev server on port 3000 |
+| `npm run build` | Production build (standalone output) |
+| `npm run start` | Run the production build (expects `npm run build` first) |
+| `npm run lint` | Run ESLint |
+| `npm run db:push` | Apply the Prisma schema to the SQLite database |
+| `npm run db:generate` | Regenerate the Prisma client |
+| `npm run db:migrate` | Create a new Prisma migration |
+| `npm run db:reset` | Reset the database (⚠️ destructive) |
+
+---
+
+## Project structure
+
+```
+src/
+├── app/
+│   ├── api/              # Route handlers: auth, accounts, github/*, ai/*
+│   ├── layout.tsx
+│   └── page.tsx           # Top-level view router
+├── components/
+│   ├── auth/               # Login/register
+│   ├── accounts/            # Add/manage GitHub accounts
+│   ├── dashboard/            # Account list (the real dashboard)
+│   ├── repos/                 # Repo list, repo detail (Files/Branches/Commits), New Repo dialog
+│   ├── files/                  # File browser, editor, Push/Pull dialogs (the core feature)
+│   ├── branches/                # Branch management
+│   ├── commits/                   # Commit history
+│   ├── ai-tools/                   # AI commit message / README generator UI
+│   ├── layout/                      # App shell, sidebar, top bar
+│   └── ui/                           # shadcn/ui primitives
+├── lib/
+│   ├── github.ts            # All GitHub REST API calls (blobs, trees, commits, refs, archives)
+│   ├── gitignore.ts          # .gitignore pattern matching/filtering
+│   ├── auth.ts                 # JWT session handling
+│   └── db.ts                    # Prisma client
+├── services/api.ts        # Client-side fetch wrappers for the API routes above
+└── store/appStore.ts     # Zustand global state (view routing, accounts, selected repo, etc.)
 ```
 
 ---
 
-## Roadmap
+## Deployment
 
-- [ ] GitHub OAuth login (currently no auth)
-- ] LLM fallback classification for messy commit histories
-- [ ] Publish directly to GitHub Releases
-- [ ] Generate shareable public changelog pages
-- [ ] Support for GitLab and Bitbucket
-- [ ] Import/export project configuration
-- [ ] Custom category rules per project
-- [ ] Changelog templates
-- [ ] Dark mode toggle
+`next.config.ts` is set to `output: "standalone"`, and a `Caddyfile` is included for reverse-proxy deployment behind Caddy. The `build`/`start` scripts assume this standalone/self-hosted setup (they run via `bun`) rather than a serverless platform like Vercel — adjust as needed if deploying elsewhere. If you do deploy to a platform with function timeouts (e.g. Vercel serverless), note that `src/app/api/github/push/route.ts` sets `maxDuration = 60`.
 
 ---
-
 ## License
 
-MIT
-
----
-
-Built with Next.js, Prisma, Tailwind CSS, and shadcn/ui.
+No license file is currently included — add one (e.g. MIT) if you intend to distribute this.
