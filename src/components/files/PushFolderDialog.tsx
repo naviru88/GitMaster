@@ -143,12 +143,21 @@ function readDirectoryEntries(reader: FileSystemDirectoryReader): Promise<FileSy
 /** Recursively walk a dropped FileSystemEntry (file or directory) and push
  * every file found into `collected`, preserving folder structure via
  * `entry.fullPath` (which is what makes drag-and-drop able to replicate
- * "Select Folder" without going through the native file picker at all). */
-async function collectFilesFromEntry(entry: FileSystemEntry, collected: FileItem[]): Promise<void> {
+ * "Select Folder" without going through the native file picker at all).
+ * `onFileFound` fires as each file is discovered — this is what drives the
+ * live "Scanning… found N files" indicator, since a large project (tens of
+ * thousands of entries, e.g. node_modules) can take a real, visible amount
+ * of time to walk with zero other feedback otherwise. */
+async function collectFilesFromEntry(
+  entry: FileSystemEntry,
+  collected: FileItem[],
+  onFileFound?: () => void,
+): Promise<void> {
   if (entry.isFile) {
     const file = await readEntryAsFile(entry as FileSystemFileEntry);
     const relPath = (entry.fullPath || `/${file.name}`).replace(/^\//, '');
     collected.push({ name: file.name, relativePath: relPath, size: file.size, file });
+    onFileFound?.();
   } else if (entry.isDirectory) {
     const reader = (entry as FileSystemDirectoryEntry).createReader();
     let entries: FileSystemEntry[] = [];
@@ -160,7 +169,7 @@ async function collectFilesFromEntry(entry: FileSystemEntry, collected: FileItem
       entries = entries.concat(batch);
     }
     for (const child of entries) {
-      await collectFilesFromEntry(child, collected);
+      await collectFilesFromEntry(child, collected, onFileFound);
     }
   }
 }
@@ -181,6 +190,11 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
   // File state
   const [rawFiles, setRawFiles] = useState<FileItem[]>([]);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
+  // While a dropped folder is being recursively walked (which is silent
+  // otherwise, and can take real time for large projects), this drives a
+  // live "Scanning… found N files" indicator instead of the UI looking
+  // frozen with no feedback at all.
+  const [scanningCount, setScanningCount] = useState<number | null>(null);
   const [commitMessage, setCommitMessage] = useState('');
 
   // Incremental processing state
@@ -329,11 +343,13 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
       const newlyInvalid = new Map<string, string>();
 
       // CONCURRENCY: read/encode multiple files at once instead of one at a
-      // time. File reads are async I/O, so this is a genuine speedup, not
-      // just busy-work — but it's capped at 4 so we don't try to hold
-      // dozens of large files in memory simultaneously (which is what could
-      // freeze or crash the tab on big batches).
-      const READ_CONCURRENCY = 4;
+      // time. This is local disk I/O via FileReader, not a network call to
+      // GitHub — there's no abuse-detection concern here (unlike the
+      // server-side blob upload concurrency, which is deliberately capped
+      // low). 8 gives a real speedup while still leaving enough headroom
+      // that a handful of large files in flight together won't spike memory
+      // or freeze the tab.
+      const READ_CONCURRENCY = 8;
 
       await runWithConcurrency(included, READ_CONCURRENCY, async (f) => {
         if (cancelled || processingIdRef.current !== myId) return;
@@ -417,9 +433,14 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
     };
   }, [included, getRelativePath]);
 
-  const notifyLargeBatch = (count: number) => {
+  // Immediate confirmation the instant a selection registers, so there's
+  // never a gap where the user can't tell whether anything happened. Larger
+  // batches get an extra heads-up that it'll take a moment.
+  const notifySelection = (count: number) => {
     if (count > 500) {
       toast.info(`${count} files selected — this may take a bit to read and cache before pushing.`);
+    } else {
+      toast.success(`${count} file(s) selected — reading and caching now…`);
     }
   };
 
@@ -435,7 +456,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
     setRawFiles(items);
     setForceIncludes(new Set());
     setInvalidFiles(new Map());
-    notifyLargeBatch(items.length);
+    notifySelection(items.length);
     e.target.value = '';
   };
 
@@ -450,7 +471,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
     setRawFiles(items);
     setForceIncludes(new Set());
     setInvalidFiles(new Map());
-    notifyLargeBatch(items.length);
+    notifySelection(items.length);
     e.target.value = '';
   };
 
@@ -493,6 +514,11 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
     const dt = e.dataTransfer;
     const collected: FileItem[] = [];
 
+    // Immediate feedback the moment the drop is registered — before any
+    // traversal has happened yet, so there's never a silent gap.
+    setScanningCount(0);
+    let lastToastUpdate = 0;
+
     try {
       const items = dt.items;
       if (items && items.length > 0 && typeof items[0]?.webkitGetAsEntry === 'function') {
@@ -506,7 +532,15 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
           if (entry) entries.push(entry);
         }
         for (const entry of entries) {
-          await collectFilesFromEntry(entry, collected);
+          await collectFilesFromEntry(entry, collected, () => {
+            // Batch state updates roughly every 20 files instead of on
+            // every single one — thousands of individual re-renders during
+            // a big node_modules scan would itself slow things down.
+            if (collected.length - lastToastUpdate >= 20) {
+              lastToastUpdate = collected.length;
+              setScanningCount(collected.length);
+            }
+          });
         }
       }
 
@@ -520,13 +554,18 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
       }
     } catch (err) {
       toast.error('Failed to read the dropped files or folder.');
+      setScanningCount(null);
       return;
     }
+
+    setScanningCount(null);
 
     if (collected.length === 0) {
       toast.error('No files found in what was dropped.');
       return;
     }
+
+    toast.success(`Found ${collected.length} file(s) — reading and caching now…`);
 
     // Merge into the existing selection: dropping more files/folders adds to
     // what's already selected, with a re-drop of the same path overwriting
@@ -535,7 +574,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
       const map = new Map(prev.map((f) => [f.relativePath, f]));
       for (const f of collected) map.set(f.relativePath, f);
       const merged = Array.from(map.values());
-      notifyLargeBatch(merged.length);
       return merged;
     });
     setForceIncludes(new Set());
@@ -818,6 +856,16 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                 <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-primary bg-primary/5 backdrop-blur-[1px] pointer-events-none">
                   <UploadCloud className="size-8 text-primary" />
                   <p className="text-sm font-medium text-primary">Drop files or folders to add them</p>
+                </div>
+              )}
+
+              {/* Live folder-scan progress — this is the "something is
+                  happening" signal during recursive directory traversal,
+                  which otherwise has zero feedback while it runs. */}
+              {scanningCount !== null && (
+                <div className="flex items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2.5 text-sm">
+                  <Loader2 className="size-4 animate-spin text-primary shrink-0" />
+                  <span>Scanning folder… found <span className="font-medium">{scanningCount}</span> file(s) so far</span>
                 </div>
               )}
 

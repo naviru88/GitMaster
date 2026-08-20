@@ -274,6 +274,42 @@ async function runWithConcurrency<T, R>(
   return results;
 }
 
+/** Above this size, don't bother inlining even if it's valid text — keeps
+ * the /trees request body from being dominated by one large file. */
+const INLINE_MAX_BYTES = 512 * 1024;
+
+/**
+ * Try to treat a file's content as safe-to-inline UTF-8 text. Returns the
+ * decoded text if so, or null if it should go through the blob-creation API
+ * instead (binary content, or too large to be worth inlining).
+ *
+ * Why this matters for speed: GitHub's Trees API lets a tree entry carry its
+ * `content` directly instead of a blob `sha` — GitHub creates the blob for
+ * you as part of the same request. For a typical push (mostly source code,
+ * config, docs — all text), this means most files need ZERO separate blob
+ * HTTP round-trips at all, which is the single biggest lever available for
+ * push speed without touching the concurrency limits that keep us under
+ * GitHub's abuse-detection radar.
+ */
+function tryInlineText(file: { content: string; isBase64: boolean }): string | null {
+  let buf: Buffer;
+  try {
+    buf = file.isBase64 ? Buffer.from(file.content, 'base64') : Buffer.from(file.content, 'utf-8');
+  } catch {
+    return null;
+  }
+  if (buf.length === 0 || buf.length > INLINE_MAX_BYTES) return null;
+  // A NUL byte is a strong binary signal that a "successful" UTF-8 decode
+  // alone won't always catch (some binary formats coincidentally decode as
+  // valid UTF-8).
+  if (buf.includes(0)) return null;
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buf);
+  } catch {
+    return null;
+  }
+}
+
 export async function batchCommit(
   token: string,
   owner: string,
@@ -290,7 +326,22 @@ export async function batchCommit(
   );
   const baseTreeSha = ref.object.sha;
 
-  // 2. Create blobs for all files.
+  // 2. Split files into "inline" (small verified-text — no blob call
+  // needed) vs "blob" (binary, or too large to safely inline) groups. See
+  // tryInlineText above for the rationale.
+  const inlineEntries: Array<{ path: string; mode: string; type: string; content: string }> = [];
+  const blobCandidates: typeof files = [];
+  for (const file of files) {
+    const full = basePath ? `${basePath}/${file.path}` : file.path;
+    const text = tryInlineText(file);
+    if (text !== null) {
+      inlineEntries.push({ path: full, mode: '100644', type: 'blob', content: text });
+    } else {
+      blobCandidates.push(file);
+    }
+  }
+
+  // 3. Create blobs only for the files that couldn't be inlined.
   // Blob creation is one HTTP round-trip per file — doing this strictly
   // sequentially is what was causing pushes of more than a couple dozen
   // files to be slow enough to fail (e.g. hit the serverless function's
@@ -306,7 +357,7 @@ export async function batchCommit(
   // retry/backoff in ghFetch above, an occasional secondary-limit hit now
   // self-heals instead of failing the whole push.
   const BLOB_UPLOAD_CONCURRENCY = 3;
-  const blobs: BlobResult[] = await runWithConcurrency(files, BLOB_UPLOAD_CONCURRENCY, async (file) => {
+  const blobResults: BlobResult[] = await runWithConcurrency(blobCandidates, BLOB_UPLOAD_CONCURRENCY, async (file) => {
     const full = basePath ? `${basePath}/${file.path}` : file.path;
     const blob = await ghFetch<{ sha: string }>(
       `${GITHUB_API}/repos/${owner}/${repo}/git/blobs`,
@@ -322,7 +373,8 @@ export async function batchCommit(
     return { sha: blob.sha, path: full, mode: '100644', type: 'blob' } as BlobResult;
   });
 
-  // 3. Create a new tree with all blobs
+  // 4. Create a new tree combining blob-referenced entries and inlined
+  // text-content entries.
   const tree = await ghFetch<{ sha: string }>(
     `${GITHUB_API}/repos/${owner}/${repo}/git/trees`,
     token,
@@ -330,12 +382,15 @@ export async function batchCommit(
       method: 'POST',
       body: JSON.stringify({
         base_tree: baseTreeSha,
-        tree: blobs.map((b) => ({ path: b.path, mode: b.mode, type: b.type, sha: b.sha })),
+        tree: [
+          ...blobResults.map((b) => ({ path: b.path, mode: b.mode, type: b.type, sha: b.sha })),
+          ...inlineEntries,
+        ],
       }),
     },
   );
 
-  // 4. Create a commit pointing to the new tree
+  // 5. Create a commit pointing to the new tree
   const commit = await ghFetch<{ sha: string }>(
     `${GITHUB_API}/repos/${owner}/${repo}/git/commits`,
     token,
@@ -349,7 +404,7 @@ export async function batchCommit(
     },
   );
 
-  // 5. Update the branch reference
+  // 6. Update the branch reference
   await ghFetch<{ object: { sha: string } }>(
     `${GITHUB_API}/repos/${owner}/${repo}/git/refs/heads/${branch}`,
     token,
@@ -359,7 +414,7 @@ export async function batchCommit(
     },
   );
 
-  return { sha: commit.sha, fileCount: blobs.length };
+  return { sha: commit.sha, fileCount: blobResults.length + inlineEntries.length };
 }
 
 // -------- Archive (Pull / Clone) --------
