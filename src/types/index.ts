@@ -1,4 +1,36 @@
-// ==================== GitHub Types ====================
+/* ============================================================
+   Shared Types — GitHub Repo Manager
+   ============================================================ */
+
+// ---------- Database ----------
+export interface User {
+  id: string;
+  name: string;
+  email: string;
+  createdAt: string;
+}
+
+export interface Account {
+  id: string;
+  label: string;
+  username: string;
+  avatarUrl: string | null;
+  token: string;
+  provider: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type AccountCreate = Pick<Account, 'label' | 'token'>;
+
+// ---------- GitHub API responses ----------
+export interface GitHubUser {
+  login: string;
+  avatar_url: string;
+  name: string | null;
+  public_repos: number;
+  private_repos: number;
+}
 
 export interface GitHubRepo {
   id: number;
@@ -6,19 +38,25 @@ export interface GitHubRepo {
   full_name: string;
   description: string | null;
   html_url: string;
+  private: boolean;
+  language: string | null;
   stargazers_count: number;
+  forks_count: number;
+  default_branch: string;
+  updated_at: string;
   owner: {
     login: string;
     avatar_url: string;
   };
 }
 
-export interface GitHubTag {
+export interface GitHubBranch {
   name: string;
   commit: {
     sha: string;
     url: string;
   };
+  protected: boolean;
 }
 
 export interface GitHubCommit {
@@ -30,156 +68,67 @@ export interface GitHubCommit {
       email: string;
       date: string;
     };
+    committer: {
+      name: string;
+      email: string;
+      date: string;
+    };
   };
+  html_url: string;
   author: {
     login: string;
+    avatar_url: string;
   } | null;
-  html_url: string;
 }
 
-export interface GitHubPR {
-  number: number;
-  title: string;
-  body: string | null;
-  user: {
-    login: string;
-  } | null;
-  merged_at: string | null;
-  labels: {
-    name: string;
-  }[];
-  html_url: string;
-}
-
-// ==================== App Types ====================
-
-export type Category =
-  | 'Features'
-  | 'Bug Fixes'
-  | 'Breaking Changes'
-  | 'Improvements'
-  | 'Chores/Internal'
-  | 'Documentation'
-  | 'Uncategorized';
-
-export type Voice = 'developer' | 'marketing';
-
-export type ChangelogStatus = 'draft' | 'published';
-
-export interface RawChange {
-  type: 'commit' | 'pr';
-  sha?: string;
-  prNumber?: number;
-  title: string;
-  body?: string;
-  author: string;
-  date: string;
-  labels?: string[];
-  conventionalPrefix?: string;
-  category: Category;
-}
-
-export interface CategorizedChanges {
-  categories: Record<Category, RawChange[]>;
-  total: number;
-}
-
-// ==================== Project Types ====================
-
-export interface Project {
-  id: string;
+export interface GitHubContent {
   name: string;
-  owner: string;
-  repo: string;
-  githubUrl: string;
-  description: string | null;
-  accessToken: string | null;
-  stars: number;
-  createdAt: string;
-  updatedAt: string;
-  _count?: {
-    changelogs: number;
+  path: string;
+  sha: string;
+  size: number;
+  url: string;
+  html_url: string | null;
+  git_url: string | null;
+  type: 'file' | 'dir';
+  content?: string;       // base64, only for files when fetched individually
+  encoding?: string;
+}
+
+export interface GitHubMergeResult {
+  sha: string;
+  merged: boolean;
+  message: string;
+}
+
+export interface GitHubCreateRepoResult {
+  id: number;
+  name: string;
+  full_name: string;
+  html_url: string;
+}
+
+export interface GitHubCreateFileResult {
+  content: GitHubContent & {
+    commit: {
+      sha: string;
+      html_url: string;
+      message: string;
+    };
   };
 }
 
-export interface ProjectInput {
-  githubUrl: string;
-  accessToken?: string;
-}
-
-// ==================== Changelog Types ====================
-
-export interface Changelog {
-  id: string;
-  projectId: string;
-  version: string | null;
-  fromRef: string;
-  toRef: string;
-  voice: Voice;
-  status: ChangelogStatus;
-  rawChanges: string;
-  draftMarkdown: string;
-  finalMarkdown: string | null;
-  createdAt: string;
-  updatedAt: string;
-  project?: Project;
-}
-
-export interface GenerateChangelogInput {
-  projectId: string;
-  fromRef: string;
-  toRef: string;
-  voice: Voice;
-  includePRs?: boolean;
-}
-
-// ==================== View Types ====================
-
+// ---------- App Views ----------
 export type AppView =
   | 'dashboard'
-  | 'project'
-  | 'new-changelog'
-  | 'edit-changelog'
-  | 'view-changelog'
-  | 'running-changelog';
+  | 'account-repos'
+  | 'repo-detail'
+  | 'file-editor'
+  | 'ai-tools';
 
-// ==================== Category Meta ====================
+export type RepoTab = 'files' | 'branches' | 'commits';
 
-export const CATEGORY_META: Record<
-  Category,
-  { color: string; icon: string; description: string }
-> = {
-  Features: { color: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400', icon: '✨', description: 'New features and functionality' },
-  'Bug Fixes': { color: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400', icon: '🐛', description: 'Bug fixes and patches' },
-  'Breaking Changes': { color: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400', icon: '⚠️', description: 'Breaking changes requiring migration' },
-  Improvements: { color: 'bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-400', icon: '⚡', description: 'Performance and UX improvements' },
-  'Chores/Internal': { color: 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400', icon: '🔧', description: 'Internal refactors, CI, tooling' },
-  Documentation: { color: 'bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-400', icon: '📝', description: 'Documentation changes' },
-  Uncategorized: { color: 'bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-400', icon: '❓', description: 'Could not be categorized' },
-};
-
-export const VOICE_META: Record<
-  Voice,
-  { label: string; description: string; icon: string }
-> = {
-  developer: {
-    label: 'Developer',
-    description: 'Technical, terse, for engineers. Assumes full context.',
-    icon: '🛠️',
-  },
-  marketing: {
-    label: 'Marketing',
-    description: 'Plain language, benefit-framed. Hides internal details.',
-    icon: '📣',
-  },
-};
-
-export const CATEGORIES: Category[] = [
-  'Features',
-  'Bug Fixes',
-  'Breaking Changes',
-  'Improvements',
-  'Chores/Internal',
-  'Documentation',
-  'Uncategorized',
-];
+// ---------- File upload ----------
+export interface FileUpload {
+  file: File;
+  path: string;        // relative path within repo
+}

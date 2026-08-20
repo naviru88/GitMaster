@@ -7,32 +7,27 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Project {
-  id          String      @id @default(cuid())
-  name        String
-  owner       String
-  repo        String
-  githubUrl   String
-  description String?
-  accessToken String?
-  stars       Int         @default(0)
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
-  changelogs  Changelog[]
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  password  String   // hashed
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  accounts Account[]
 }
 
-model Changelog {
-  id            String   @id @default(cuid())
-  projectId     String
-  version       String?
-  fromRef       String
-  toRef         String
-  voice         String   @default("developer")
-  status        String   @default("draft")
-  rawChanges    String
-  draftMarkdown String
-  finalMarkdown String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+model Account {
+  id         String   @id @default(cuid())
+  label      String                        // User-given label e.g. "Work", "Personal"
+  username   String                        // GitHub username
+  avatarUrl  String?
+  token      String                        // GitHub PAT (stored as-is for proxy)
+  provider   String   @default("github")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }

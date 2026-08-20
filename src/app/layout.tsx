@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import { Toaster } from "@/components/ui/toaster";
+import { Providers } from "@/components/providers";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -14,9 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ChangelogAI — AI-Powered Release Notes",
-  description: "Generate beautiful, structured release notes from GitHub commits and PRs using AI. Two voices: Developer and Marketing.",
-  keywords: ["changelog", "release notes", "GitHub", "AI", "LLM", "changelog generator"],
+  title: "GitMaster — GitHub Repo Manager",
+  description: "Manage your GitHub repositories, browse files, branches, and commits with AI-powered tools.",
   icons: {
     icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
   },
@@ -32,8 +31,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
-        {children}
-        <Toaster />
+        <Providers>{children}</Providers>
       </body>
     </html>
   );

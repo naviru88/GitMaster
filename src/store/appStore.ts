@@ -1,100 +1,159 @@
+/* ============================================================
+   Zustand Store — App State
+   ============================================================ */
+
 import { create } from 'zustand';
-import type { AppView, Project, Voice, GitHubTag, CategorizedChanges, Changelog } from '@/types';
+import type { AppView, RepoTab, Account, GitHubRepo, GitHubContent, GitHubBranch, GitHubCommit, User } from '@/types';
 
 interface AppState {
-  // View management
+  // Auth
+  user: User | null;
+  setUser: (u: User | null) => void;
+  authLoading: boolean;
+  setAuthLoading: (l: boolean) => void;
+
+  // Navigation
   view: AppView;
-  setView: (view: AppView) => void;
+  setView: (v: AppView) => void;
 
-  // Project management
-  projects: Project[];
-  setProjects: (projects: Project[]) => void;
-  addProject: (project: Project) => void;
-  removeProject: (id: string) => void;
-  selectedProject: Project | null;
-  selectedProjectId: string | null;
-  selectProject: (id: string) => void;
-  setSelectedProject: (project: Project | null) => void;
+  // Accounts
+  accounts: Account[];
+  setAccounts: (a: Account[]) => void;
+  addAccount: (a: Account) => void;
+  removeAccount: (id: string) => void;
+  selectedAccountId: string | null;
+  setSelectedAccountId: (id: string | null) => void;
 
-  // Wizard state
-  wizardStep: number;
-  setWizardStep: (step: number) => void;
-  validatedRepo: Record<string, unknown> | null;
-  setValidatedRepo: (repo: Record<string, unknown> | null) => void;
-  tags: GitHubTag[];
-  setTags: (tags: GitHubTag[]) => void;
-  fromRef: string;
-  setFromRef: (ref: string) => void;
-  toRef: string;
-  setToRef: (ref: string) => void;
-  includePRs: boolean;
-  setIncludePRs: (include: boolean) => void;
-  voice: Voice;
-  setVoice: (voice: Voice) => void;
+  // Repos
+  repos: GitHubRepo[];
+  setRepos: (r: GitHubRepo[]) => void;
+  reposTotalCount: number;
+  setReposTotalCount: (n: number) => void;
+  selectedRepo: GitHubRepo | null;
+  setSelectedRepo: (r: GitHubRepo | null) => void;
 
-  // Changelog state
-  categorizedChanges: CategorizedChanges | null;
-  setCategorizedChanges: (changes: CategorizedChanges | null) => void;
-  currentChangelog: Changelog | null;
-  setCurrentChangelog: (changelog: Changelog | null) => void;
-  projectChangelogs: Changelog[];
-  setProjectChangelogs: (changelogs: Changelog[]) => void;
-  editedMarkdown: string;
-  setEditedMarkdown: (markdown: string) => void;
-  isGenerating: boolean;
-  setIsGenerating: (generating: boolean) => void;
+  // Repo detail
+  repoTab: RepoTab;
+  setRepoTab: (t: RepoTab) => void;
+  selectedBranch: string;
+  setSelectedBranch: (b: string) => void;
 
-  // New project dialog
-  isNewProjectDialogOpen: boolean;
-  setIsNewProjectDialogOpen: (open: boolean) => void;
+  // File browser
+  filePath: string;
+  setFilePath: (p: string) => void;
+  fileContents: GitHubContent[];
+  setFileContents: (f: GitHubContent[]) => void;
+  openedFile: { content: GitHubContent; decoded: string } | null;
+  setOpenedFile: (f: { content: GitHubContent; decoded: string } | null) => void;
+
+  // Branches
+  branches: GitHubBranch[];
+  setBranches: (b: GitHubBranch[]) => void;
+
+  // Commits
+  commits: GitHubCommit[];
+  setCommits: (c: GitHubCommit[]) => void;
+
+  // Loading states
+  loading: boolean;
+  setLoading: (l: boolean) => void;
+
+  // Reset all state (for logout)
+  resetAll: () => void;
 }
 
+const initialState = {
+  view: 'dashboard' as AppView,
+  accounts: [] as Account[],
+  selectedAccountId: null as string | null,
+  repos: [] as GitHubRepo[],
+  reposTotalCount: 0,
+  selectedRepo: null as GitHubRepo | null,
+  repoTab: 'files' as RepoTab,
+  selectedBranch: '',
+  filePath: '',
+  fileContents: [] as GitHubContent[],
+  openedFile: null as { content: GitHubContent; decoded: string } | null,
+  branches: [] as GitHubBranch[],
+  commits: [] as GitHubCommit[],
+  loading: false,
+};
+
 export const useAppStore = create<AppState>((set) => ({
-  // View management
+  // Auth
+  user: null,
+  setUser: (user) => set({ user }),
+  authLoading: true,
+  setAuthLoading: (authLoading) => set({ authLoading }),
+
+  // Navigation
   view: 'dashboard',
   setView: (view) => set({ view }),
 
-  // Project management
-  projects: [],
-  setProjects: (projects) => set({ projects }),
-  addProject: (project) => set((state) => ({ projects: [project, ...state.projects] })),
-  removeProject: (id) => set((state) => ({
-    projects: state.projects.filter((p) => p.id !== id),
+  // Accounts
+  accounts: [],
+  setAccounts: (accounts) => set({ accounts }),
+  addAccount: (a) => set((s) => ({ accounts: [...s.accounts, a] })),
+  removeAccount: (id) => set((s) => ({
+    accounts: s.accounts.filter((a) => a.id !== id),
+    selectedAccountId: s.selectedAccountId === id ? null : s.selectedAccountId,
   })),
-  selectedProject: null,
-  selectedProjectId: null,
-  selectProject: (id) => set({ selectedProjectId: id }),
-  setSelectedProject: (project) => set({ selectedProject: project }),
+  selectedAccountId: null,
+  setSelectedAccountId: (selectedAccountId) => set({ selectedAccountId, repos: [], commits: [], branches: [], fileContents: [], openedFile: null, filePath: '' }),
 
-  // Wizard state
-  wizardStep: 1,
-  setWizardStep: (step) => set({ wizardStep: step }),
-  validatedRepo: null,
-  setValidatedRepo: (repo) => set({ validatedRepo: repo }),
-  tags: [],
-  setTags: (tags) => set({ tags }),
-  fromRef: '',
-  setFromRef: (ref) => set({ fromRef: ref }),
-  toRef: '',
-  setToRef: (ref) => set({ toRef: ref }),
-  includePRs: false,
-  setIncludePRs: (include) => set({ includePRs: include }),
-  voice: 'developer',
-  setVoice: (voice) => set({ voice }),
+  // Repos
+  repos: [],
+  setRepos: (repos) => set({ repos }),
+  reposTotalCount: 0,
+  setReposTotalCount: (reposTotalCount) => set({ reposTotalCount }),
+  selectedRepo: null,
+  setSelectedRepo: (selectedRepo) => set({
+    selectedRepo,
+    repoTab: 'files',
+    selectedBranch: selectedRepo?.default_branch || '',
+    filePath: '',
+    fileContents: [],
+    openedFile: null,
+    commits: [],
+    branches: [],
+  }),
 
-  // Changelog state
-  categorizedChanges: null,
-  setCategorizedChanges: (changes) => set({ categorizedChanges: changes }),
-  currentChangelog: null,
-  setCurrentChangelog: (changelog) => set({ currentChangelog: changelog }),
-  projectChangelogs: [],
-  setProjectChangelogs: (changelogs) => set({ projectChangelogs: changelogs }),
-  editedMarkdown: '',
-  setEditedMarkdown: (markdown) => set({ editedMarkdown: markdown }),
-  isGenerating: false,
-  setIsGenerating: (generating) => set({ isGenerating: generating }),
+  // Repo detail
+  repoTab: 'files',
+  setRepoTab: (repoTab) => set({ repoTab }),
+  selectedBranch: '',
+  setSelectedBranch: (selectedBranch) => set({
+    selectedBranch,
+    filePath: '',
+    fileContents: [],
+    openedFile: null,
+    view: 'repo-detail',
+  }),
 
-  // New project dialog
-  isNewProjectDialogOpen: false,
-  setIsNewProjectDialogOpen: (open) => set({ isNewProjectDialogOpen: open }),
+  // File browser
+  filePath: '',
+  setFilePath: (filePath) => set({ filePath, fileContents: [], openedFile: null }),
+  fileContents: [],
+  setFileContents: (fileContents) => set({ fileContents }),
+  openedFile: null,
+  setOpenedFile: (openedFile) => set({ openedFile, view: openedFile ? 'file-editor' : 'repo-detail' }),
+
+  // Branches
+  branches: [],
+  setBranches: (branches) => set({ branches }),
+
+  // Commits
+  commits: [],
+  setCommits: (commits) => set({ commits }),
+
+  // Loading states
+  loading: false,
+  setLoading: (loading) => set({ loading }),
+
+  // Reset all state (for logout)
+  resetAll: () => set({
+    ...initialState,
+    user: null,
+    authLoading: false,
+  }),
 }));
