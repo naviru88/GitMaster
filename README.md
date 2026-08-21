@@ -1,6 +1,6 @@
 # GitMaster
 
-> A self-hosted, browser-based GUI for pushing, pulling, and managing GitHub repositories — built to replace the terminal `git add / commit / push` workflow with drag-and-drop file uploads, automatic `.gitignore` handling, and a proper account manager for multiple GitHub identities.
+> A self-hosted, browser-based GUI for pushing, pulling, and managing GitHub repositories â built to replace the terminal `git add / commit / push` workflow with drag-and-drop file uploads, automatic `.gitignore` handling, and a proper account manager for multiple GitHub identities.
 
 ![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?logo=typescript)
@@ -19,9 +19,9 @@ GitMaster connects to GitHub's REST API on your behalf (using a Personal Access 
 - **Browse** repo contents, switch branches, and view commit history
 - **Merge** branches
 - **Manage multiple GitHub accounts** side by side (e.g. personal + work), each with its own token
-- Optionally, **generate commit messages and READMEs with AI** (see [AI Tools](#ai-tools--requires-setup) below — this one needs a bit of configuration)
+- Optionally, **generate commit messages and READMEs with AI** (see [AI Tools](#ai-tools--requires-setup) below â this one needs a bit of configuration)
 
-Everything runs through your own Next.js server talking directly to `api.github.com` — there's no third-party backend in between.
+Everything runs through your own Next.js server talking directly to `api.github.com` â there's no third-party backend in between.
 
 ---
 
@@ -36,17 +36,17 @@ Everything runs through your own Next.js server talking directly to `api.github.
 - Per-repo tabs for **Files**, **Branches**, and **Commits**
 - In-browser file viewer/editor for individual files
 
-### Push — the core feature
+### Push â the core feature
 This is the most heavily built-out part of the app, specifically designed to avoid the problems that come from uploading a raw folder through a browser:
 
-- **Drag-and-drop** whole folders (recursively) or individual files directly onto the push dialog — no reliance on the OS's native file picker, which can be unreliable on some Linux/browser combinations
+- **Drag-and-drop** whole folders (recursively) or individual files directly onto the push dialog â no reliance on the OS's native file picker, which can be unreliable on some Linux/browser combinations
 - **Automatic `.gitignore` detection**: if a `.gitignore` file is found in what you selected, its rules are used automatically; otherwise sensible defaults apply (`node_modules/`, `.git/`, `.DS_Store`, `*.log`, etc.)
-- **`.git/` is always excluded**, unconditionally and non-overridably — GitHub's API rejects any path containing a `.git` component outright, so this is enforced regardless of your `.gitignore` settings, both client- and server-side
+- **`.git/` is always excluded**, unconditionally and non-overridably â GitHub's API rejects any path containing a `.git` component outright, so this is enforced regardless of your `.gitignore` settings, both client- and server-side
 - **Per-file validation failsafe**: corrupted/unreadable files or anything over GitHub's 100MB blob limit are automatically skipped (with a reason shown) instead of failing the entire push
-- **Live progress feedback** at every stage — folder scanning, file caching/encoding, and the actual GitHub upload each show their own progress, pinned to a fixed spot in the dialog so it's never hidden by scrolling
+- **Live progress feedback** at every stage â folder scanning, file caching/encoding, and the actual GitHub upload each show their own progress, pinned to a fixed spot in the dialog so it's never hidden by scrolling
 - **Rate-limit aware**: automatically retries with backoff if GitHub's secondary (abuse-prevention) rate limit is hit, instead of failing the push outright
 - **Optimized upload path**: small text files are embedded directly into the Git tree in a single request rather than requiring a separate API call per file, which meaningfully cuts down the number of round-trips for a typical push (mostly source code)
-- No artificial cap on file count — GitHub's own Trees API doesn't have one either; only total payload size is guarded against
+- No artificial cap on file count â GitHub's own Trees API doesn't have one either; only total payload size is guarded against
 
 ### Pull
 - Download any branch of a repo as a `.zip` or `.tar.gz` archive directly to your machine
@@ -55,9 +55,9 @@ This is the most heavily built-out part of the app, specifically designed to avo
 - View, switch, and merge branches
 - Browse commit history per repo
 
-### AI Tools — *requires setup*
+### AI Tools â *requires setup*
 - A **commit message generator** and **README generator**, both AI-powered
-- ⚠️ **Out of the box these will not work.** They're wired up to `z-ai-web-dev-sdk`, an SDK tied to the specific cloud sandbox this project was originally scaffolded in — it has no API key of its own to configure and won't authenticate outside that environment. To use these features, replace the calls in `src/app/api/ai/commit-message/route.ts` and `src/app/api/ai/readme/route.ts` with a real LLM provider (e.g. the [Anthropic](https://docs.claude.com) or OpenAI SDK) and your own API key.
+- â ï¸ **Out of the box these will not work.** They're wired up to `z-ai-web-dev-sdk`, an SDK tied to the specific cloud sandbox this project was originally scaffolded in â it has no API key of its own to configure and won't authenticate outside that environment. To use these features, replace the calls in `src/app/api/ai/commit-message/route.ts` and `src/app/api/ai/readme/route.ts` with a real LLM provider (e.g. the [Anthropic](https://docs.claude.com) or OpenAI SDK) and your own API key.
 
 ---
 
@@ -69,9 +69,9 @@ This project was originally scaffolded from a different template app (a GitHub c
 - `src/components/wizard/NewChangelogWizard.tsx`
 - `src/components/changelog/*`
 - `src/components/github/NewProjectDialog.tsx`
-- The `/api/projects/*` and `/api/changelog/*` routes — these reference a `Project`/`Changelog` Prisma model that no longer exists in `prisma/schema.prisma` (only `User` and `Account` are defined)
+- The `/api/projects/*` and `/api/changelog/*` routes â these reference a `Project`/`Changelog` Prisma model that no longer exists in `prisma/schema.prisma` (only `User` and `Account` are defined)
 
-None of this is reachable from the real app (`src/app/page.tsx` only renders `DashboardView` from `src/components/dashboard/`, `AccountReposView`, `RepoDetailView`, `FileEditor`, and `AIToolsView`), so it doesn't affect normal use — but if you're exploring the codebase, don't be surprised to find it. Safe to delete if you want a cleaner tree.
+None of this is reachable from the real app (`src/app/page.tsx` only renders `DashboardView` from `src/components/dashboard/`, `AccountReposView`, `RepoDetailView`, `FileEditor`, and `AIToolsView`), so it doesn't affect normal use â but if you're exploring the codebase, don't be surprised to find it. Safe to delete if you want a cleaner tree.
 
 ---
 
@@ -106,7 +106,7 @@ DATABASE_URL="file:./db/custom.db"
 JWT_SECRET="replace-with-any-long-random-string"
 ```
 
-Both are required. `DATABASE_URL` **must be a relative path** (`file:./db/custom.db`) — an absolute path baked in from a different machine/environment will fail with a permissions or "unable to open database file" error.
+Both are required. `DATABASE_URL` **must be a relative path** (`file:./db/custom.db`) â an absolute path baked in from a different machine/environment will fail with a permissions or "unable to open database file" error.
 
 ### 3. Set up the database
 
@@ -126,7 +126,7 @@ The app runs at **http://localhost:3000**.
 
 ### 5. Create an account and connect GitHub
 
-Sign up on first load (this creates a local `User` row), then add a GitHub account from within the app using a **Personal Access Token** (classic or fine-grained, with `repo` scope). That token is what powers push/pull/branch/commit operations — it's stored per-account in the local database.
+Sign up on first load (this creates a local `User` row), then add a GitHub account from within the app using a **Personal Access Token** (classic or fine-grained, with `repo` scope). That token is what powers push/pull/branch/commit operations â it's stored per-account in the local database.
 
 ---
 
@@ -141,7 +141,7 @@ Sign up on first load (this creates a local `User` row), then add a GitHub accou
 | `npm run db:push` | Apply the Prisma schema to the SQLite database |
 | `npm run db:generate` | Regenerate the Prisma client |
 | `npm run db:migrate` | Create a new Prisma migration |
-| `npm run db:reset` | Reset the database (⚠️ destructive) |
+| `npm run db:reset` | Reset the database (â ï¸ destructive) |
 
 ---
 
@@ -149,38 +149,42 @@ Sign up on first load (this creates a local `User` row), then add a GitHub accou
 
 ```
 src/
-├── app/
-│   ├── api/              # Route handlers: auth, accounts, github/*, ai/*
-│   ├── layout.tsx
-│   └── page.tsx           # Top-level view router
-├── components/
-│   ├── auth/               # Login/register
-│   ├── accounts/            # Add/manage GitHub accounts
-│   ├── dashboard/            # Account list (the real dashboard)
-│   ├── repos/                 # Repo list, repo detail (Files/Branches/Commits), New Repo dialog
-│   ├── files/                  # File browser, editor, Push/Pull dialogs (the core feature)
-│   ├── branches/                # Branch management
-│   ├── commits/                   # Commit history
-│   ├── ai-tools/                   # AI commit message / README generator UI
-│   ├── layout/                      # App shell, sidebar, top bar
-│   └── ui/                           # shadcn/ui primitives
-├── lib/
-│   ├── github.ts            # All GitHub REST API calls (blobs, trees, commits, refs, archives)
-│   ├── gitignore.ts          # .gitignore pattern matching/filtering
-│   ├── auth.ts                 # JWT session handling
-│   └── db.ts                    # Prisma client
-├── services/api.ts        # Client-side fetch wrappers for the API routes above
-└── store/appStore.ts     # Zustand global state (view routing, accounts, selected repo, etc.)
+âââ app/
+â   âââ api/              # Route handlers: auth, accounts, github/*, ai/*
+â   âââ layout.tsx
+â   âââ page.tsx           # Top-level view router
+âââ components/
+â   âââ auth/               # Login/register
+â   âââ accounts/            # Add/manage GitHub accounts
+â   âââ dashboard/            # Account list (the real dashboard)
+â   âââ repos/                 # Repo list, repo detail (Files/Branches/Commits), New Repo dialog
+â   âââ files/                  # File browser, editor, Push/Pull dialogs (the core feature)
+â   âââ branches/                # Branch management
+â   âââ commits/                   # Commit history
+â   âââ ai-tools/                   # AI commit message / README generator UI
+â   âââ layout/                      # App shell, sidebar, top bar
+â   âââ ui/                           # shadcn/ui primitives
+âââ lib/
+â   âââ github.ts            # All GitHub REST API calls (blobs, trees, commits, refs, archives)
+â   âââ gitignore.ts          # .gitignore pattern matching/filtering
+â   âââ auth.ts                 # JWT session handling
+â   âââ db.ts                    # Prisma client
+âââ services/api.ts        # Client-side fetch wrappers for the API routes above
+âââ store/appStore.ts     # Zustand global state (view routing, accounts, selected repo, etc.)
 ```
 
 ---
 
 ## Deployment
 
-`next.config.ts` is set to `output: "standalone"`, and a `Caddyfile` is included for reverse-proxy deployment behind Caddy. The `build`/`start` scripts assume this standalone/self-hosted setup (they run via `bun`) rather than a serverless platform like Vercel — adjust as needed if deploying elsewhere. If you do deploy to a platform with function timeouts (e.g. Vercel serverless), note that `src/app/api/github/push/route.ts` sets `maxDuration = 60`.
+`next.config.ts` is set to `output: "standalone"`, and a `Caddyfile` is included for reverse-proxy deployment behind Caddy. The `build`/`start` scripts assume this standalone/self-hosted setup (they run via `bun`) rather than a serverless platform like Vercel â adjust as needed if deploying elsewhere. If you do deploy to a platform with function timeouts (e.g. Vercel serverless), note that `src/app/api/github/push/route.ts` sets `maxDuration = 60`.
 
 ---
 
+## Hosting
+- [Live Site](https://gitmaster-omega.vercel.app)
+- [GitHub Repo](https://github.com/naviru88/GitMaster)
+
 ## License
 
-No license file is currently included — add one (e.g. MIT) if you intend to distribute this.
+No license file is currently included â add one (e.g. MIT) if you intend to distribute this.
