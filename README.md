@@ -149,30 +149,29 @@ Sign up on first load (this creates a local `User` row), then add a GitHub accou
 
 ```
 src/
-âââ app/
-â   âââ api/              # Route handlers: auth, accounts, github/*, ai/*
-â   âââ layout.tsx
-â   âââ page.tsx           # Top-level view router
-âââ components/
-â   âââ auth/               # Login/register
-â   âââ accounts/            # Add/manage GitHub accounts
-â   âââ dashboard/            # Account list (the real dashboard)
-â   âââ repos/                 # Repo list, repo detail (Files/Branches/Commits), New Repo dialog
-â   âââ files/                  # File browser, editor, Push/Pull dialogs (the core feature)
-â   âââ branches/                # Branch management
-â   âââ commits/                   # Commit history
-â   âââ ai-tools/                   # AI commit message / README generator UI
-â   âââ layout/                      # App shell, sidebar, top bar
-â   âââ ui/                           # shadcn/ui primitives
-âââ lib/
-â   âââ github.ts            # All GitHub REST API calls (blobs, trees, commits, refs, archives)
-â   âââ gitignore.ts          # .gitignore pattern matching/filtering
-â   âââ auth.ts                 # JWT session handling
-â   âââ db.ts                    # Prisma client
-âââ services/api.ts        # Client-side fetch wrappers for the API routes above
-âââ store/appStore.ts     # Zustand global state (view routing, accounts, selected repo, etc.)
+├── app/
+│   ├── api/              # Route handlers: auth, accounts, github/*, ai/*
+│   ├── layout.tsx
+│   └── page.tsx           # Top-level view router
+├── components/
+│   ├── auth/               # Login/register
+│   ├── accounts/            # Add/manage GitHub accounts
+│   ├── dashboard/            # Account list (the real dashboard)
+│   ├── repos/                 # Repo list, repo detail (Files/Branches/Commits), New Repo dialog
+│   ├── files/                  # File browser, editor, Push/Pull dialogs (the core feature)
+│   ├── branches/                # Branch management
+│   ├── commits/                   # Commit history
+│   ├── ai-tools/                   # AI commit message / README generator UI
+│   ├── layout/                      # App shell, sidebar, top bar
+│   └── ui/                           # shadcn/ui primitives
+├── lib/
+│   ├── github.ts            # All GitHub REST API calls (blobs, trees, commits, refs, archives)
+│   ├── gitignore.ts          # .gitignore pattern matching/filtering
+│   ├── auth.ts                 # JWT session handling
+│   └── db.ts                    # Prisma client
+├── services/api.ts        # Client-side fetch wrappers for the API routes above
+└── store/appStore.ts     # Zustand global state (view routing, accounts, selected repo, etc.)
 ```
-
 ---
 
 ## Deployment
