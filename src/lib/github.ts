@@ -422,3 +422,47 @@ export async function batchCommit(
 export function getArchiveUrl(owner: string, repo: string, ref: string, format: 'zipball' | 'tarball' = 'zipball') {
   return `${GITHUB_API}/repos/${owner}/${repo}/${format}/${ref}`;
 }
+
+// -------- Changelog generator support --------
+// NOTE: these take (owner, repo, ...args, token) — matching the call sites in
+// the changelog/project API routes, which is the reverse of the (token, owner,
+// repo, ...) convention used elsewhere in this file.
+
+export async function validateRepo(owner: string, repo: string, token?: string) {
+  return ghFetch<import('@/types').GitHubRepo>(`${GITHUB_API}/repos/${owner}/${repo}`, token);
+}
+
+export async function fetchTags(owner: string, repo: string, token?: string, page = 1, perPage = 100) {
+  return ghFetch<import('@/types').GitHubTag[]>(
+    `${GITHUB_API}/repos/${owner}/${repo}/tags?per_page=${perPage}&page=${page}`,
+    token,
+  );
+}
+
+export async function fetchCommitsBetween(
+  owner: string, repo: string, fromRef: string, toRef: string, token?: string,
+) {
+  const result = await compareCommits(token, owner, repo, fromRef, toRef);
+  return result.commits;
+}
+
+export async function fetchMergedPRs(
+  owner: string, repo: string, fromDate: string, toDate: string, token?: string,
+  page = 1, perPage = 50,
+) {
+  const params = new URLSearchParams({
+    state: 'closed',
+    per_page: String(perPage),
+    page: String(page),
+    sort: 'updated',
+    direction: 'desc',
+  });
+  const prs = await ghFetch<import('@/types').GitHubPR[]>(
+    `${GITHUB_API}/repos/${owner}/${repo}/pulls?${params.toString()}`,
+    token,
+  );
+  return prs.filter((pr) => {
+    if (!pr.merged_at) return false;
+    return pr.merged_at >= fromDate && pr.merged_at <= toDate;
+  });
+}

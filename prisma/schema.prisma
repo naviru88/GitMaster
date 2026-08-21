@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -30,4 +30,36 @@ model Account {
 
   userId     String
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Project {
+  id          String   @id @default(cuid())
+  name        String
+  owner       String
+  repo        String
+  githubUrl   String
+  description String?
+  accessToken String?
+  stars       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  changelogs  Changelog[]
+}
+
+model Changelog {
+  id            String   @id @default(cuid())
+  fromRef       String
+  toRef         String
+  voice         String
+  status        String   @default("draft")
+  rawChanges    String
+  draftMarkdown String
+  finalMarkdown String?
+  version       String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  projectId     String
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }

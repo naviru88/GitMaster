@@ -180,6 +180,7 @@ src/
 `next.config.ts` is set to `output: "standalone"`, and a `Caddyfile` is included for reverse-proxy deployment behind Caddy. The `build`/`start` scripts assume this standalone/self-hosted setup (they run via `bun`) rather than a serverless platform like Vercel — adjust as needed if deploying elsewhere. If you do deploy to a platform with function timeouts (e.g. Vercel serverless), note that `src/app/api/github/push/route.ts` sets `maxDuration = 60`.
 
 ---
+
 ## License
 
 No license file is currently included — add one (e.g. MIT) if you intend to distribute this.
