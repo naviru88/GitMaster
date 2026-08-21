@@ -186,4 +186,4 @@ src/
 
 ## License
 
-No license file is currently included â add one (e.g. MIT) if you intend to distribute this.
+No license file is currently included — add one (e.g. MIT) if you intend to distribute this.
