@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 import { github } from '@/services/api';
-import { filterByGitignore, DEFAULT_GITIGNORE_PATTERNS } from '@/lib/gitignore';
+import { filterByGitignore, parseGitignore, shouldIgnoreDir, DEFAULT_GITIGNORE_PATTERNS, type Pattern } from '@/lib/gitignore';
 import {
   Dialog,
   DialogContent,
@@ -63,21 +63,189 @@ interface FileItem {
   file: File;
 }
 
-/** Convert ArrayBuffer to base64 without stack overflow (works for large files) */
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  const chunkSize = 8192;
-  let binary = '';
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const chunk = bytes.subarray(i, i + chunkSize);
-    binary += String.fromCharCode(...chunk);
+/** GitHub's own ceiling for a single blob via the Git Data API. */
+const GITHUB_MAX_FILE_BYTES = 100 * 1024 * 1024;
+
+/** GitHub's Git Trees API unconditionally rejects any path with a `.git`
+ * path component (case-insensitive) — this is a hard restriction on their
+ * end ("tree.path contains a malformed path component"), not a preference.
+ * It must be enforced regardless of .gitignore state, because:
+ *  - a project's own .gitignore file almost never lists `.git/` itself,
+ *    since real git never needs to be told to ignore its own directory —
+ *    but this app reads the raw filesystem, so a selected/dropped folder's
+ *    literal .git/ directory is fair game unless blocked here directly.
+ *  - even where it wouldn't be rejected, pushing .git internals (config,
+ *    refs, COMMIT_EDITMSG — potentially credentials) is never wanted.
+ * Because GitHub will always reject these, this block is intentionally
+ * NOT overridable via "force include", unlike ordinary .gitignore matches.
+ */
+function isBlockedGitPath(path: string): boolean {
+  return path.split('/').some((seg) => seg.toLowerCase() === '.git');
+}
+
+/** Read a File as base64 via the browser's native FileReader instead of
+ * manually chunking bytes through String.fromCharCode + btoa. The manual
+ * loop was the main source of the "very slow / freezes" push behavior —
+ * FileReader.readAsDataURL is implemented natively by the browser and is
+ * both faster and far less likely to block/crash the tab on larger files. */
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string; // "data:<mime>;base64,XXXX"
+      const commaIdx = result.indexOf(',');
+      resolve(commaIdx >= 0 ? result.slice(commaIdx + 1) : result);
+    };
+    reader.onerror = () => reject(reader.error || new Error('Could not read file'));
+    reader.onabort = () => reject(new Error('File read was aborted'));
+    reader.readAsDataURL(file);
+  });
+}
+
+/** Run async work with bounded concurrency. Used so multiple files are
+ * read/encoded in parallel (I/O is async, so this is a real speedup) without
+ * ever holding the *entire* batch in flight at once — which is what risked
+ * ballooning memory and crashing the tab on large pushes. */
+async function runWithConcurrency<T>(
+  items: T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<void>,
+): Promise<void> {
+  let cursor = 0;
+  async function runNext(): Promise<void> {
+    while (true) {
+      const i = cursor++;
+      if (i >= items.length) return;
+      await worker(items[i], i);
+    }
   }
-  return btoa(binary);
+  const workers = Array.from({ length: Math.min(limit, items.length) }, () => runNext());
+  await Promise.all(workers);
 }
 
 /** Yield to the event loop so the UI doesn't freeze */
 function yieldToMain(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/** Read a FileSystemFileEntry as a File */
+function readEntryAsFile(entry: FileSystemFileEntry): Promise<File> {
+  return new Promise((resolve, reject) => entry.file(resolve, reject));
+}
+
+/** Read a FileSystemFileEntry directly as text (used for eagerly reading a
+ * root .gitignore before the main walk, so we don't need to round-trip
+ * through a File + a second FileReader call at the caller). */
+function readEntryAsText(entry: FileSystemFileEntry): Promise<string> {
+  return new Promise((resolve, reject) => {
+    entry.file((file) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve((e.target?.result as string) ?? '');
+      reader.onerror = () => reject(reader.error || new Error('Could not read .gitignore'));
+      reader.readAsText(file);
+    }, reject);
+  });
+}
+
+/** FileSystemDirectoryReader.readEntries only returns up to ~100 entries per
+ * call in Chromium browsers, so it must be called repeatedly until it
+ * returns an empty array. */
+function readDirectoryEntries(reader: FileSystemDirectoryReader): Promise<FileSystemEntry[]> {
+  return new Promise((resolve, reject) => reader.readEntries(resolve, reject));
+}
+
+/** Before the real (potentially huge) recursive walk begins, look for a
+ * project-root .gitignore so directory pruning below can use the real
+ * rules from the very first directory it considers descending into,
+ * instead of only the generic defaults. Checks two places, cheaply:
+ *  1. A .gitignore dropped directly (alongside other loose files).
+ *  2. One level inside each dropped directory — the common case, since
+ *     dropping "my-project/" means my-project/.gitignore is one level down.
+ * Deliberately does NOT recurse further than that: nested .gitignore files
+ * are out of scope here, same as before this change (the existing
+ * post-selection auto-detect effect still catches those separately). */
+async function findRootGitignoreContent(entries: FileSystemEntry[]): Promise<string | null> {
+  for (const entry of entries) {
+    if (entry.isFile && entry.name === '.gitignore') {
+      return readEntryAsText(entry as FileSystemFileEntry);
+    }
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory) continue;
+    const reader = (entry as FileSystemDirectoryEntry).createReader();
+    let children: FileSystemEntry[] = [];
+    while (true) {
+      const batch = await readDirectoryEntries(reader);
+      if (batch.length === 0) break;
+      children = children.concat(batch);
+    }
+    const gi = children.find((c) => c.isFile && c.name === '.gitignore');
+    if (gi) return readEntryAsText(gi as FileSystemFileEntry);
+  }
+  return null;
+}
+
+/** Recursively walk a dropped FileSystemEntry (file or directory) and push
+ * every file found into `collected`, preserving folder structure via
+ * `entry.fullPath` (which is what makes drag-and-drop able to replicate
+ * "Select Folder" without going through the native file picker at all).
+ *
+ * Directories are pruned — never descended into, their contents never
+ * read — the moment they match either the hard `.git` block or the given
+ * .gitignore `patterns` (when provided). This mirrors how real `git`
+ * itself walks a working tree: an ignored directory's contents are simply
+ * never inspected. It's also what actually keeps a huge ignored directory
+ * (node_modules, .git, build output) from costing any scan time at all,
+ * versus discovering every file inside it and filtering afterward.
+ *
+ * `onFileFound` fires as each file is discovered — this is what drives the
+ * live "Scanning… found N files" indicator, since a large project can take
+ * a real, visible amount of time to walk with zero other feedback
+ * otherwise. `onDirPruned` fires once per skipped directory, with its
+ * relative path, so the caller can surface what got skipped and why. */
+async function collectFilesFromEntry(
+  entry: FileSystemEntry,
+  collected: FileItem[],
+  patterns: Pattern[] | null,
+  onDirPruned?: (relPath: string) => void,
+  onFileFound?: () => void,
+): Promise<void> {
+  if (entry.isFile) {
+    const file = await readEntryAsFile(entry as FileSystemFileEntry);
+    const relPath = (entry.fullPath || `/${file.name}`).replace(/^\//, '');
+    collected.push({ name: file.name, relativePath: relPath, size: file.size, file });
+    onFileFound?.();
+  } else if (entry.isDirectory) {
+    const relPath = (entry.fullPath || `/${entry.name}`).replace(/^\//, '');
+
+    // Hard block: never descend into a .git directory, regardless of
+    // .gitignore state (see isBlockedGitPath for why this can't be
+    // overridden). Pruning it here — rather than discovering its contents
+    // and filtering them out later — is what actually avoids reading
+    // potentially large repo internals off disk at all.
+    if (isBlockedGitPath(relPath)) {
+      onDirPruned?.(relPath);
+      return;
+    }
+
+    if (patterns && shouldIgnoreDir(relPath, patterns)) {
+      onDirPruned?.(relPath);
+      return;
+    }
+
+    const reader = (entry as FileSystemDirectoryEntry).createReader();
+    let entries: FileSystemEntry[] = [];
+    // Keep calling readEntries until it returns [] — a single call is not
+    // guaranteed to return the full directory listing.
+    while (true) {
+      const batch = await readDirectoryEntries(reader);
+      if (batch.length === 0) break;
+      entries = entries.concat(batch);
+    }
+    for (const child of entries) {
+      await collectFilesFromEntry(child, collected, patterns, onDirPruned, onFileFound);
+    }
+  }
 }
 
 type Step = 'message' | 'files' | 'review';
@@ -95,6 +263,18 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
 
   // File state
   const [rawFiles, setRawFiles] = useState<FileItem[]>([]);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+  // While a dropped folder is being recursively walked (which is silent
+  // otherwise, and can take real time for large projects), this drives a
+  // live "Scanning… found N files" indicator instead of the UI looking
+  // frozen with no feedback at all.
+  const [scanningCount, setScanningCount] = useState<number | null>(null);
+  // Directories skipped entirely during a drag-and-drop scan (never
+  // descended into, so their contents were never read). Accumulates across
+  // multiple drops into the same selection; only drag-and-drop can populate
+  // this — the native folder/file pickers hand back an already-flat list
+  // with no opportunity to prune before reading.
+  const [prunedDirs, setPrunedDirs] = useState<string[]>([]);
   const [commitMessage, setCommitMessage] = useState('');
 
   // Incremental processing state
@@ -119,6 +299,12 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
   const [showExcluded, setShowExcluded] = useState(false);
   const [forceIncludes, setForceIncludes] = useState<Set<string>>(new Set());
 
+  // Failsafe: files that failed to read/encode, or that are too large for
+  // GitHub's blob API. Tracked separately from .gitignore exclusion so the
+  // UI can explain *why* each file was skipped, and so one bad file never
+  // blocks the rest of the batch.
+  const [invalidFiles, setInvalidFiles] = useState<Map<string, string>>(new Map());
+
   // Stable helper
   const getRelativePath = useCallback((item: FileItem) => {
     return item.relativePath.includes('/')
@@ -127,12 +313,32 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
   }, []);
 
   // Apply gitignore filtering
+  // NOTE: we intentionally do NOT gate this on `gitignoreSource !== 'none'`.
+  // `gitignoreContent` is always initialized to DEFAULT_GITIGNORE_PATTERNS, so
+  // even when no .gitignore has been auto-detected or uploaded ("none"), the
+  // sensible defaults (node_modules/, .git/, .DS_Store, *.log, ...) must still
+  // apply whenever gitignoreEnabled is on. `gitignoreSource` is purely a UI
+  // label (auto-detected / uploaded / none) and must never affect filtering.
   const { included, excluded } = useMemo(() => {
-    if (!gitignoreEnabled || gitignoreSource === 'none' || rawFiles.length === 0) {
-      return { included: rawFiles, excluded: [] as FileItem[] };
+    if (rawFiles.length === 0) {
+      return { included: [] as FileItem[], excluded: [] as FileItem[] };
     }
 
-    const allPaths = rawFiles.map((f) => getRelativePath(f));
+    // Hard block for .git/ paths — applies even with .gitignore filtering
+    // toggled off, and is never overridable via forceIncludes (see
+    // isBlockedGitPath above for why).
+    const gitBlocked = new Set(
+      rawFiles.map((f) => getRelativePath(f)).filter(isBlockedGitPath),
+    );
+
+    if (!gitignoreEnabled) {
+      return {
+        included: rawFiles.filter((f) => !gitBlocked.has(getRelativePath(f))),
+        excluded: rawFiles.filter((f) => gitBlocked.has(getRelativePath(f))),
+      };
+    }
+
+    const allPaths = rawFiles.map((f) => getRelativePath(f)).filter((p) => !gitBlocked.has(p));
     const { included: incPaths, excluded: excPaths } = filterByGitignore(allPaths, gitignoreContent);
     const incSet = new Set(incPaths);
     const excSet = new Set(excPaths);
@@ -140,27 +346,37 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
     return {
       included: rawFiles.filter((f) => {
         const rp = getRelativePath(f);
+        if (gitBlocked.has(rp)) return false;
         if (forceIncludes.has(rp)) return true;
         return incSet.has(rp);
       }),
       excluded: rawFiles.filter((f) => {
         const rp = getRelativePath(f);
+        if (gitBlocked.has(rp)) return true;
         if (forceIncludes.has(rp)) return false;
         return excSet.has(rp);
       }),
     };
-  }, [rawFiles, gitignoreEnabled, gitignoreSource, gitignoreContent, forceIncludes, getRelativePath]);
+  }, [rawFiles, gitignoreEnabled, gitignoreContent, forceIncludes, getRelativePath]);
+
+  // Files that pass .gitignore filtering AND are actually readable/valid.
+  // This is the list that gets cached and pushed — invalid files are
+  // automatically excluded rather than blocking the rest of the batch.
+  const pushable = useMemo(
+    () => included.filter((f) => !invalidFiles.has(getRelativePath(f))),
+    [included, invalidFiles, getRelativePath],
+  );
 
   // Cache stats - force recompute via cacheVersion
   const cachedCount = useMemo(() => {
     let count = 0;
-    for (const f of included) {
+    for (const f of pushable) {
       if (fileCacheRef.current.has(getRelativePath(f))) count++;
     }
     return count;
-  }, [included, getRelativePath, cacheVersion]);
+  }, [pushable, getRelativePath, cacheVersion]);
 
-  const allCached = cachedCount === included.length && included.length > 0;
+  const allCached = cachedCount === pushable.length && pushable.length > 0;
 
   // Auto-detect .gitignore in selected files
   useEffect(() => {
@@ -179,67 +395,97 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
     }
   }, [rawFiles]);
 
-  // Incremental file processing - runs in background when files are selected
+  // Incremental file processing - runs in background when the *included*
+  // (post-.gitignore-filter) file set changes.
+  //
+  // IMPORTANT: this intentionally reads from `included`, not `rawFiles`.
+  // Reading/base64-encoding a file is the expensive part of a push (it's
+  // what actually consumes memory and inflates the request payload), so we
+  // must never do that work for files that .gitignore is going to exclude
+  // anyway (e.g. node_modules/, build output, lockfile noise, etc). Doing so
+  // was previously silently processing every selected file regardless of
+  // filtering, which both slowed down file selection and defeated the whole
+  // point of .gitignore-based exclusion (reducing upload size/capacity).
   useEffect(() => {
-    if (rawFiles.length === 0) return;
+    if (included.length === 0) return;
 
     const myId = ++processingIdRef.current;
-
     let cancelled = false;
 
     const process = async () => {
       setIsProcessing(true);
       setProcessingError(null);
-      const total = rawFiles.length;
+      const total = included.length;
       setProcessingQueue(total);
+      let doneCount = 0;
       setProcessingDone(0);
 
-      for (let i = 0; i < total; i++) {
+      const newlyInvalid = new Map<string, string>();
+
+      // CONCURRENCY: read/encode multiple files at once instead of one at a
+      // time. This is local disk I/O via FileReader, not a network call to
+      // GitHub — there's no abuse-detection concern here (unlike the
+      // server-side blob upload concurrency, which is deliberately capped
+      // low). 8 gives a real speedup while still leaving enough headroom
+      // that a handful of large files in flight together won't spike memory
+      // or freeze the tab.
+      const READ_CONCURRENCY = 8;
+
+      await runWithConcurrency(included, READ_CONCURRENCY, async (f) => {
         if (cancelled || processingIdRef.current !== myId) return;
 
-        try {
-          const f = rawFiles[i];
-          const rp = f.relativePath.includes('/')
-            ? f.relativePath.split('/').slice(1).join('/')
-            : f.relativePath;
+        const rp = getRelativePath(f);
 
-          // Skip if already cached
-          if (fileCacheRef.current.has(rp)) {
-            setProcessingDone(i + 1);
-            if (i % 3 === 0) await yieldToMain();
-            continue;
-          }
-
-          const buffer = await f.file.arrayBuffer();
-          const base64 = arrayBufferToBase64(buffer);
-          fileCacheRef.current.set(rp, base64);
-          setProcessingDone(i + 1);
-          setCacheVersion((v) => v + 1); // trigger re-render for cachedCount
-
-          // Yield every 3 files to keep UI responsive
-          if (i % 3 === 0) {
-            await yieldToMain();
-          }
-        } catch (err) {
-          if (!cancelled) {
-            setProcessingError(`Failed to read file: ${rawFiles[i].name}`);
-          }
-          setIsProcessing(false);
+        // Skip if already cached
+        if (fileCacheRef.current.has(rp)) {
+          doneCount++;
+          setProcessingDone(doneCount);
           return;
         }
+
+        // FAILSAFE 1: reject files GitHub's blob API can't accept anyway,
+        // without ever reading their bytes into memory.
+        if (f.size > GITHUB_MAX_FILE_BYTES) {
+          newlyInvalid.set(rp, `Too large (${(f.size / 1024 / 1024).toFixed(1)}MB) — GitHub's limit is 100MB per file`);
+          doneCount++;
+          setProcessingDone(doneCount);
+          return;
+        }
+
+        // FAILSAFE 2: a corrupted/unreadable/permission-denied file is
+        // caught and skipped here, per-file — it no longer halts the rest
+        // of the batch the way a single failure previously did.
+        try {
+          const base64 = await fileToBase64(f.file);
+          if (cancelled || processingIdRef.current !== myId) return;
+          fileCacheRef.current.set(rp, base64);
+          setCacheVersion((v) => v + 1);
+        } catch (err) {
+          newlyInvalid.set(rp, err instanceof Error ? err.message : 'Could not be read (possibly corrupted)');
+        }
+
+        doneCount++;
+        setProcessingDone(doneCount);
+        await yieldToMain();
+      });
+
+      if (cancelled || processingIdRef.current !== myId) return;
+
+      if (newlyInvalid.size > 0) {
+        setInvalidFiles((prev) => {
+          const next = new Map(prev);
+          for (const [k, v] of newlyInvalid) next.set(k, v);
+          return next;
+        });
       }
 
-      if (!cancelled && processingIdRef.current === myId) {
-        setIsProcessing(false);
-      }
+      setIsProcessing(false);
     };
 
-    // Clean stale cache entries
-    const currentPaths = new Set(rawFiles.map((f) => {
-      return f.relativePath.includes('/')
-        ? f.relativePath.split('/').slice(1).join('/')
-        : f.relativePath;
-    }));
+    // Clean stale cache/invalid entries — anything no longer in the included
+    // set (removed by the user, or newly excluded by .gitignore) should not
+    // linger in memory or get pushed.
+    const currentPaths = new Set(included.map((f) => getRelativePath(f)));
     let hadCleanup = false;
     for (const key of fileCacheRef.current.keys()) {
       if (!currentPaths.has(key)) {
@@ -248,13 +494,35 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
       }
     }
     if (hadCleanup) setCacheVersion((v) => v + 1);
+    setInvalidFiles((prev) => {
+      let changed = false;
+      const next = new Map(prev);
+      for (const key of next.keys()) {
+        if (!currentPaths.has(key)) {
+          next.delete(key);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
 
     process();
 
     return () => {
       cancelled = true;
     };
-  }, [rawFiles]);
+  }, [included, getRelativePath]);
+
+  // Immediate confirmation the instant a selection registers, so there's
+  // never a gap where the user can't tell whether anything happened. Larger
+  // batches get an extra heads-up that it'll take a moment.
+  const notifySelection = (count: number) => {
+    if (count > 500) {
+      toast.info(`${count} files selected — this may take a bit to read and cache before pushing.`);
+    } else {
+      toast.success(`${count} file(s) selected — reading and caching now…`);
+    }
+  };
 
   const handleFolderSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const list = e.target.files;
@@ -267,6 +535,12 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
     }
     setRawFiles(items);
     setForceIncludes(new Set());
+    setInvalidFiles(new Map());
+    // A native picker replaces the whole selection with an already-flat
+    // list — nothing was pruned to get it, and any dirs pruned by an
+    // earlier drop no longer apply to what's now selected.
+    setPrunedDirs([]);
+    notifySelection(items.length);
     e.target.value = '';
   };
 
@@ -280,8 +554,156 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
     }
     setRawFiles(items);
     setForceIncludes(new Set());
+    setInvalidFiles(new Map());
+    setPrunedDirs([]);
+    notifySelection(items.length);
     e.target.value = '';
   };
+
+  // ==================== Drag & drop (bypasses the native file picker) ====================
+  // Uses a counter ref instead of a plain boolean because dragenter/dragleave
+  // fire repeatedly as the pointer crosses child elements inside the drop
+  // zone; a naive boolean flag flickers the overlay on/off constantly.
+  const dragCounterRef = useRef(0);
+
+  const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (isProcessing || pushing) return;
+    if (!e.dataTransfer.types.includes('Files')) return;
+    dragCounterRef.current += 1;
+    setIsDraggingOver(true);
+  }, [isProcessing, pushing]);
+
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    // preventDefault is required here, or the browser will refuse the drop
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current = Math.max(0, dragCounterRef.current - 1);
+    if (dragCounterRef.current === 0) setIsDraggingOver(false);
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current = 0;
+    setIsDraggingOver(false);
+    if (isProcessing || pushing) return;
+
+    const dt = e.dataTransfer;
+    const collected: FileItem[] = [];
+    const prunedThisDrop: string[] = [];
+
+    // Immediate feedback the moment the drop is registered — before any
+    // traversal has happened yet, so there's never a silent gap.
+    setScanningCount(0);
+    let lastToastUpdate = 0;
+
+    try {
+      const items = dt.items;
+      if (items && items.length > 0 && typeof items[0]?.webkitGetAsEntry === 'function') {
+        // Modern path (Chrome/Brave/Firefox): supports whole folders,
+        // recursively, with structure preserved via entry.fullPath.
+        const entries: FileSystemEntry[] = [];
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          if (item.kind !== 'file') continue;
+          const entry = item.webkitGetAsEntry();
+          if (entry) entries.push(entry);
+        }
+
+        // Look for a project .gitignore *before* the real walk starts, so
+        // directory pruning below can use the real rules from its very
+        // first decision instead of only the generic defaults. Only
+        // matters when filtering is on — with it off, nothing gets pruned
+        // by pattern anyway (only the hard .git block still applies).
+        let patterns: Pattern[] | null = null;
+        if (gitignoreEnabled) {
+          let effectiveContent = gitignoreContent;
+          try {
+            const found = await findRootGitignoreContent(entries);
+            if (found != null) {
+              effectiveContent = found;
+              setGitignoreSource('auto');
+              setGitignoreContent(found);
+            }
+          } catch {
+            // Couldn't read it early — fall back to whatever rules were
+            // already active and let the normal post-selection detection
+            // effect try again once rawFiles updates.
+          }
+          patterns = parseGitignore(effectiveContent);
+        }
+
+        for (const entry of entries) {
+          await collectFilesFromEntry(
+            entry,
+            collected,
+            patterns,
+            (dirPath) => prunedThisDrop.push(dirPath),
+            () => {
+              // Batch state updates roughly every 20 files instead of on
+              // every single one — thousands of individual re-renders during
+              // a big node_modules scan would itself slow things down.
+              if (collected.length - lastToastUpdate >= 20) {
+                lastToastUpdate = collected.length;
+                setScanningCount(collected.length);
+              }
+            },
+          );
+        }
+      }
+
+      // Fallback: flat file list only (no folder structure) — used if the
+      // browser doesn't support webkitGetAsEntry at all. There's no entry
+      // tree to prune here, so nothing to skip up front.
+      if (collected.length === 0 && dt.files && dt.files.length > 0) {
+        for (let i = 0; i < dt.files.length; i++) {
+          const f = dt.files[i];
+          collected.push({ name: f.name, relativePath: f.name, size: f.size, file: f });
+        }
+      }
+    } catch (err) {
+      toast.error('Failed to read the dropped files or folder.');
+      setScanningCount(null);
+      return;
+    }
+
+    setScanningCount(null);
+
+    if (collected.length === 0 && prunedThisDrop.length === 0) {
+      toast.error('No files found in what was dropped.');
+      return;
+    }
+
+    if (collected.length === 0) {
+      toast.info(`Everything in that drop matched .gitignore — ${prunedThisDrop.length} folder(s) skipped, nothing to add.`);
+    } else {
+      const prunedNote = prunedThisDrop.length > 0 ? ` (skipped ${prunedThisDrop.length} ignored folder(s))` : '';
+      toast.success(`Found ${collected.length} file(s)${prunedNote} — reading and caching now…`);
+    }
+
+    // Merge into the existing selection: dropping more files/folders adds to
+    // what's already selected, with a re-drop of the same path overwriting
+    // the earlier version rather than duplicating it.
+    setRawFiles((prev) => {
+      const map = new Map(prev.map((f) => [f.relativePath, f]));
+      for (const f of collected) map.set(f.relativePath, f);
+      const merged = Array.from(map.values());
+      return merged;
+    });
+    setForceIncludes(new Set());
+
+    if (prunedThisDrop.length > 0) {
+      setPrunedDirs((prev) => Array.from(new Set([...prev, ...prunedThisDrop])));
+    }
+  }, [isProcessing, pushing, gitignoreEnabled, gitignoreContent]);
 
   const handleGitignoreFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -314,30 +736,63 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
   };
 
   const handlePush = async () => {
-    if (!selectedAccountId || !selectedRepo || included.length === 0) return;
+    if (!selectedAccountId || !selectedRepo || pushable.length === 0) return;
     const msg = commitMessage.trim() || 'Push files';
     const branch = selectedBranch || selectedRepo.default_branch;
 
     setPushing(true);
     setPushProgress(0);
 
+    // A single evolving toast (loading → success/error) instead of a bare
+    // one-line message that only appears at the very end. This is the main
+    // "something is happening" signal — it stays visible even if the person
+    // switches tabs or scrolls the dialog, and it's driven by sonner's
+    // richColors theme rather than a default unstyled browser notification.
+    const toastId = toast.loading(`Preparing ${pushable.length} file(s)…`, {
+      description: 'Reading and encoding files before upload.',
+    });
+
     try {
       // All files should already be cached from incremental processing
       const fileData: Array<{ path: string; content: string; isBase64: boolean }> = [];
-      for (let i = 0; i < included.length; i++) {
-        const f = included[i];
+      for (let i = 0; i < pushable.length; i++) {
+        const f = pushable[i];
         const rp = getRelativePath(f);
         const cached = fileCacheRef.current.get(rp);
         if (cached) {
           fileData.push({ path: rp, content: cached, isBase64: true });
         } else {
-          // Fallback: read on the fly (shouldn't normally happen)
-          const buffer = await f.file.arrayBuffer();
-          const base64 = arrayBufferToBase64(buffer);
-          fileData.push({ path: rp, content: base64, isBase64: true });
+          // Fallback: read on the fly (shouldn't normally happen, since the
+          // background caching effect should have already handled it). Any
+          // failure here is caught per-file so one bad file doesn't abort
+          // an otherwise-ready push — it's just skipped and reported.
+          try {
+            const base64 = await fileToBase64(f.file);
+            fileData.push({ path: rp, content: base64, isBase64: true });
+          } catch (err) {
+            setInvalidFiles((prev) => new Map(prev).set(rp, err instanceof Error ? err.message : 'Could not be read'));
+          }
         }
-        setPushProgress(Math.round(((i + 1) / included.length) * 90));
+        setPushProgress(Math.round(((i + 1) / pushable.length) * 90));
+        // Don't spam the toast with a re-render on every single file —
+        // update it periodically so the count still visibly ticks up.
+        if (i % 10 === 0 || i === pushable.length - 1) {
+          toast.loading(`Preparing files… (${i + 1}/${pushable.length})`, { id: toastId });
+        }
       }
+
+      if (fileData.length === 0) {
+        toast.error('Nothing to push', {
+          id: toastId,
+          description: 'All selected files were skipped as invalid.',
+        });
+        return;
+      }
+
+      toast.loading(`Uploading ${fileData.length} file(s) to GitHub…`, {
+        id: toastId,
+        description: `${selectedRepo.owner.login}/${selectedRepo.name} · ${branch}`,
+      });
 
       const result = await github.push.batch(
         selectedAccountId,
@@ -350,13 +805,23 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
       );
 
       setPushProgress(100);
-      const excludedNote = excluded.length > 0 ? ` (${excluded.length} file(s) excluded by .gitignore)` : '';
-      toast.success(`Pushed ${result.filesCommitted} file(s) in commit ${result.sha.slice(0, 7)}${excludedNote}`);
+      const skippedParts = [
+        excluded.length > 0 ? `${excluded.length} excluded by .gitignore` : null,
+        invalidFiles.size > 0 ? `${invalidFiles.size} skipped as invalid` : null,
+      ].filter(Boolean);
+      const skippedNote = skippedParts.length > 0 ? ` · ${skippedParts.join(', ')}` : '';
+      toast.success(`Pushed ${result.filesCommitted} file(s) to ${branch}`, {
+        id: toastId,
+        description: `Commit ${result.sha.slice(0, 7)}${skippedNote}`,
+      });
       resetState();
       onOpenChange(false);
       onSuccess();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Push failed.');
+      toast.error('Push failed', {
+        id: toastId,
+        description: err instanceof Error ? err.message : 'Unknown error — please try again.',
+      });
     } finally {
       setPushing(false);
       setPushProgress(0);
@@ -366,11 +831,13 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
   const resetState = () => {
     setStep('message');
     setRawFiles([]);
+    setPrunedDirs([]);
     setCommitMessage('');
     setPushProgress(0);
     setGitignoreSource('none');
     setGitignoreContent(DEFAULT_GITIGNORE_PATTERNS);
     setForceIncludes(new Set());
+    setInvalidFiles(new Map());
     setShowExcluded(false);
     setProcessingQueue(0);
     setProcessingDone(0);
@@ -386,13 +853,13 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
-  const totalSize = included.reduce((sum, f) => sum + f.size, 0);
+  const totalSize = pushable.reduce((sum, f) => sum + f.size, 0);
   const excludedSize = excluded.reduce((sum, f) => sum + f.size, 0);
   const processingPercent = processingQueue > 0 ? Math.round((processingDone / processingQueue) * 100) : 0;
 
   const canGoNext =
     step === 'message' ? commitMessage.trim().length > 0 :
-    step === 'files' ? included.length > 0 && !isProcessing && !processingError :
+    step === 'files' ? pushable.length > 0 && !isProcessing && !processingError :
     true;
 
   const stepLabels: Record<Step, string> = {
@@ -406,6 +873,13 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
     <Dialog
       open={open}
       onOpenChange={(v) => {
+        if (!v && pushing) {
+          // Prevent the dialog (and its close-guarded toast) from vanishing
+          // mid-upload — closing here would abandon visibility into an
+          // in-flight push with no way to tell if it actually finished.
+          toast.info('Push in progress — please wait for it to finish.');
+          return;
+        }
         if (!v) resetState();
         onOpenChange(v);
       }}
@@ -457,6 +931,24 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
           </div>
         </DialogHeader>
 
+        {/* Upload progress — deliberately placed OUTSIDE the scrollable
+            content area (shrink-0, not inside overflow-y-auto) so it stays
+            visible no matter how far the file list is scrolled. This is the
+            main "the site is doing something" signal during the actual
+            network upload. */}
+        {pushing && (
+          <div className="shrink-0 flex flex-col gap-1.5 rounded-lg border bg-muted/40 px-3 py-2.5">
+            <div className="flex items-center justify-between text-sm font-medium">
+              <span className="flex items-center gap-2">
+                <Loader2 className="size-4 animate-spin text-primary" />
+                {pushProgress < 90 ? 'Preparing files…' : 'Uploading to GitHub…'}
+              </span>
+              <span className="text-muted-foreground">{pushProgress}%</span>
+            </div>
+            <Progress value={pushProgress} className="h-2" />
+          </div>
+        )}
+
         <div className="flex flex-col gap-4 overflow-y-auto flex-1 min-h-0">
           {/* ==================== STEP 1: Commit Message ==================== */}
           {step === 'message' && (
@@ -479,7 +971,53 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
 
           {/* ==================== STEP 2: Select Files ==================== */}
           {step === 'files' && (
-            <div className="flex flex-col gap-4 py-2">
+            <div
+              className="flex flex-col gap-4 py-2 relative"
+              onDragEnter={handleDragEnter}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
+              {/* Drag-and-drop overlay */}
+              {isDraggingOver && (
+                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-primary bg-primary/5 backdrop-blur-[1px] pointer-events-none">
+                  <UploadCloud className="size-8 text-primary" />
+                  <p className="text-sm font-medium text-primary">Drop files or folders to add them</p>
+                </div>
+              )}
+
+              {/* Live folder-scan progress — this is the "something is
+                  happening" signal during recursive directory traversal,
+                  which otherwise has zero feedback while it runs. */}
+              {scanningCount !== null && (
+                <div className="flex items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2.5 text-sm">
+                  <Loader2 className="size-4 animate-spin text-primary shrink-0" />
+                  <span>Scanning folder… found <span className="font-medium">{scanningCount}</span> file(s) so far</span>
+                </div>
+              )}
+
+              {/* Directories skipped entirely during the drag-and-drop scan —
+                  these were never descended into, so their contents were
+                  never read off disk at all (unlike ordinary .gitignore
+                  exclusion, which still has to discover a file before it can
+                  filter it out). Only drag-and-drop can populate this. */}
+              {scanningCount === null && prunedDirs.length > 0 && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="flex items-start gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-xs cursor-default">
+                      <ShieldCheck className="size-3.5 text-green-600 shrink-0 mt-0.5" />
+                      <span className="text-muted-foreground">
+                        <span className="font-medium text-foreground">{prunedDirs.length}</span> folder(s) skipped entirely during scan (never read):{' '}
+                        <span className="font-mono">{prunedDirs.slice(0, 4).join(', ')}{prunedDirs.length > 4 ? `, +${prunedDirs.length - 4} more` : ''}</span>
+                      </span>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs">
+                    These matched .gitignore before their contents were ever scanned, so nothing inside them can be force-included or shown in the excluded list — same as real git. To include something from inside one, disable .gitignore filtering (or adjust the rules) before dropping the folder again.
+                  </TooltipContent>
+                </Tooltip>
+              )}
+
               {/* File selection buttons */}
               <div className="flex gap-2">
                 <label className="flex-1">
@@ -509,6 +1047,15 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                   </div>
                 </label>
               </div>
+
+              {rawFiles.length === 0 && (
+                <div className="flex flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed py-6 text-center">
+                  <UploadCloud className="size-5 text-muted-foreground" />
+                  <p className="text-xs text-muted-foreground">
+                    Or drag and drop files or a whole folder here
+                  </p>
+                </div>
+              )}
 
               {/* Processing progress */}
               {(isProcessing || (processingDone > 0 && processingDone < processingQueue)) && (
@@ -592,37 +1139,36 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                     </div>
                   </div>
 
-                  {gitignoreEnabled && gitignoreSource !== 'none' && (
+                  {excluded.length > 0 && (
                     <>
-                      {excluded.length > 0 && (
-                        <div className="flex items-center gap-2 mb-2 text-xs">
-                          <FileX2 className="size-3.5 text-orange-500" />
-                          <span className="text-orange-600 font-medium">
-                            {excluded.length} file(s) excluded
-                          </span>
-                          <span className="text-muted-foreground">
-                            ({formatSize(excludedSize)} saved)
-                          </span>
-                          <button
-                            className="ml-auto text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
-                            onClick={() => setShowExcluded((v) => !v)}
-                          >
-                            {showExcluded ? (
-                              <><EyeOff className="size-3" /> Hide</>
-                            ) : (
-                              <><Eye className="size-3" /> Show</>
-                            )}
-                          </button>
-                        </div>
-                      )}
+                      <div className="flex items-center gap-2 mb-2 text-xs">
+                        <FileX2 className="size-3.5 text-orange-500" />
+                        <span className="text-orange-600 font-medium">
+                          {excluded.length} file(s) excluded
+                        </span>
+                        <span className="text-muted-foreground">
+                          ({formatSize(excludedSize)} saved)
+                        </span>
+                        <button
+                          className="ml-auto text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
+                          onClick={() => setShowExcluded((v) => !v)}
+                        >
+                          {showExcluded ? (
+                            <><EyeOff className="size-3" /> Hide</>
+                          ) : (
+                            <><Eye className="size-3" /> Show</>
+                          )}
+                        </button>
+                      </div>
 
                       {/* Excluded files list */}
-                      {showExcluded && excluded.length > 0 && (
+                      {showExcluded && (
                         <ScrollArea className="max-h-28 mb-2">
                           <div className="divide-y rounded border bg-destructive/5">
                             {excluded.map((f, i) => {
                               const rp = getRelativePath(f);
                               const isForced = forceIncludes.has(rp);
+                              const isGitBlocked = isBlockedGitPath(rp);
                               return (
                                 <div
                                   key={`exc-${i}`}
@@ -630,63 +1176,82 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                                 >
                                   <Checkbox
                                     checked={isForced}
-                                    onCheckedChange={() => toggleForceInclude(rp)}
+                                    onCheckedChange={() => !isGitBlocked && toggleForceInclude(rp)}
+                                    disabled={isGitBlocked}
                                     className="size-3.5"
                                   />
                                   <FileText className="size-3 text-muted-foreground shrink-0" />
-                                  <span className="flex-1 truncate font-mono" title={rp}>{rp}</span>
+                                  <span className={`flex-1 truncate font-mono ${isGitBlocked ? 'text-destructive' : ''}`} title={isGitBlocked ? `${rp} — GitHub rejects .git/ paths, cannot be pushed` : rp}>
+                                    {rp}
+                                    {isGitBlocked && <span className="text-destructive/70"> — blocked by GitHub</span>}
+                                  </span>
                                   <span className="text-muted-foreground shrink-0">{formatSize(f.size)}</span>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <button
-                                        onClick={() => toggleForceInclude(rp)}
-                                        className="text-muted-foreground hover:text-green-600 transition-colors"
-                                      >
-                                        {isForced ? <ShieldOff className="size-3" /> : <ShieldCheck className="size-3" />}
-                                      </button>
-                                    </TooltipTrigger>
-                                    <TooltipContent>
-                                      {isForced ? 'Re-exclude this file' : 'Force-include this file'}
-                                    </TooltipContent>
-                                  </Tooltip>
+                                  {isGitBlocked ? (
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <ShieldOff className="size-3 text-destructive/60" />
+                                      </TooltipTrigger>
+                                      <TooltipContent>
+                                        GitHub's API always rejects .git/ paths — this can't be force-included
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  ) : (
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <button
+                                          onClick={() => toggleForceInclude(rp)}
+                                          className="text-muted-foreground hover:text-green-600 transition-colors"
+                                        >
+                                          {isForced ? <ShieldOff className="size-3" /> : <ShieldCheck className="size-3" />}
+                                        </button>
+                                      </TooltipTrigger>
+                                      <TooltipContent>
+                                        {isForced ? 'Re-exclude this file' : 'Force-include this file'}
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  )}
                                 </div>
                               );
                             })}
                           </div>
                         </ScrollArea>
                       )}
-
-                      {/* Editable gitignore content */}
-                      <Collapsible>
-                        <CollapsibleTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="w-full h-7 text-xs text-muted-foreground hover:text-foreground justify-start gap-1.5"
-                          >
-                            Edit .gitignore rules
-                          </Button>
-                        </CollapsibleTrigger>
-                        <CollapsibleContent>
-                          <textarea
-                            className="mt-1 w-full min-h-[80px] max-h-[200px] rounded-md border bg-muted/50 px-3 py-2 text-xs font-mono resize-y focus:outline-none focus:ring-2 focus:ring-ring"
-                            value={gitignoreContent}
-                            onChange={(e) => {
-                              setGitignoreContent(e.target.value);
-                              if (gitignoreSource === 'auto') setGitignoreSource('manual');
-                            }}
-                            disabled={pushing}
-                            placeholder="# Add gitignore patterns here..."
-                            spellCheck={false}
-                          />
-                        </CollapsibleContent>
-                      </Collapsible>
                     </>
+                  )}
+
+                  {/* Editable gitignore content — independent of whether
+                      anything is currently excluded; rules can be added
+                      proactively before any file happens to match them. */}
+                  {gitignoreEnabled && gitignoreSource !== 'none' && (
+                    <Collapsible>
+                      <CollapsibleTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="w-full h-7 text-xs text-muted-foreground hover:text-foreground justify-start gap-1.5"
+                        >
+                          Edit .gitignore rules
+                        </Button>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent>
+                        <textarea
+                          className="mt-1 w-full min-h-[80px] max-h-[200px] rounded-md border bg-muted/50 px-3 py-2 text-xs font-mono resize-y focus:outline-none focus:ring-2 focus:ring-ring"
+                          value={gitignoreContent}
+                          onChange={(e) => {
+                            setGitignoreContent(e.target.value);
+                            if (gitignoreSource === 'auto') setGitignoreSource('manual');
+                          }}
+                          disabled={pushing}
+                          placeholder="# Add gitignore patterns here..."
+                          spellCheck={false}
+                        />
+                      </CollapsibleContent>
+                    </Collapsible>
                   )}
 
                   {gitignoreEnabled && gitignoreSource === 'none' && (
                     <p className="text-xs text-muted-foreground">
-                      Using default rules (node_modules/, .git/, .DS_Store, Thumbs.db, *.log).{' '}
+                      Applying default rules (node_modules/, .git/, .DS_Store, Thumbs.db, *.log).{' '}
                       <button
                         className="text-primary hover:underline"
                         onClick={() => gitignoreFileRef.current?.click()}
@@ -699,7 +1264,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
 
                   {!gitignoreEnabled && (
                     <p className="text-xs text-muted-foreground">
-                      .gitignore filtering is disabled. All selected files will be pushed.
+                      .gitignore filtering is disabled — all other selected files will be pushed. (.git/ paths are always excluded, since GitHub's API rejects them regardless.)
                     </p>
                   )}
                 </div>
@@ -711,9 +1276,12 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                   <div className="flex items-center justify-between px-3 py-2 bg-muted/50 border-b text-xs text-muted-foreground">
                     <span className="flex items-center gap-1.5">
                       <FileCheck2 className="size-3.5 text-green-600" />
-                      {included.length} file(s) to push
-                      {excluded.length > 0 && gitignoreEnabled && (
+                      {pushable.length} file(s) to push
+                      {excluded.length > 0 && (
                         <span className="text-orange-500"> ({excluded.length} excluded)</span>
+                      )}
+                      {invalidFiles.size > 0 && (
+                        <span className="text-destructive"> ({invalidFiles.size} invalid)</span>
                       )}
                     </span>
                     <span>{formatSize(totalSize)}</span>
@@ -723,16 +1291,22 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                       {included.map((f, i) => {
                         const rp = getRelativePath(f);
                         const isCached = fileCacheRef.current.has(rp);
+                        const invalidReason = invalidFiles.get(rp);
                         return (
                           <div key={`inc-${i}`} className="flex items-center gap-2 px-3 py-1.5 text-sm group">
-                            {isCached ? (
+                            {invalidReason ? (
+                              <FileX2 className="size-3.5 text-destructive shrink-0" />
+                            ) : isCached ? (
                               <Check className="size-3.5 text-green-600 shrink-0" />
                             ) : isProcessing ? (
                               <Loader2 className="size-3.5 animate-spin text-muted-foreground shrink-0" />
                             ) : (
                               <FileText className="size-3.5 text-muted-foreground shrink-0" />
                             )}
-                            <span className="flex-1 truncate font-mono text-xs" title={rp}>{rp}</span>
+                            <span className={`flex-1 truncate font-mono text-xs ${invalidReason ? 'text-destructive' : ''}`} title={invalidReason ? `${rp} — ${invalidReason}` : rp}>
+                              {rp}
+                              {invalidReason && <span className="text-destructive/80"> — {invalidReason}</span>}
+                            </span>
                             <span className="text-xs text-muted-foreground shrink-0">{formatSize(f.size)}</span>
                             {!pushing && (
                               <button
@@ -750,15 +1324,19 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                 </div>
               )}
 
-              {/* No files after filtering warning */}
-              {rawFiles.length > 0 && included.length === 0 && (
+              {/* No files left to push after filtering + invalid-file exclusion */}
+              {rawFiles.length > 0 && pushable.length === 0 && (
                 <div className="border rounded-lg p-4 text-center">
                   <FileX2 className="size-8 mx-auto text-orange-500 mb-2" />
                   <p className="text-sm text-muted-foreground">
-                    All {rawFiles.length} selected file(s) match .gitignore rules.
+                    {included.length === 0
+                      ? `All ${rawFiles.length} selected file(s) match .gitignore rules.`
+                      : `All ${included.length} remaining file(s) failed validation.`}
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Show excluded files to force-include specific ones, or disable .gitignore filtering.
+                    {included.length === 0
+                      ? 'Show excluded files to force-include specific ones, or disable .gitignore filtering.'
+                      : 'See the reasons listed next to each file above.'}
                   </p>
                 </div>
               )}
@@ -795,18 +1373,24 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                 <div className="h-px bg-border" />
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium">Files</span>
-                  <span className="text-sm">{included.length} file(s) · {formatSize(totalSize)}</span>
+                  <span className="text-sm">{pushable.length} file(s) · {formatSize(totalSize)}</span>
                 </div>
-                {excluded.length > 0 && gitignoreEnabled && (
+                {excluded.length > 0 && (
                   <div className="flex items-center justify-between">
-                    <span className="text-sm text-muted-foreground">Excluded by .gitignore</span>
+                    <span className="text-sm text-muted-foreground">Excluded</span>
                     <span className="text-xs text-orange-500">{excluded.length} file(s) · {formatSize(excludedSize)}</span>
+                  </div>
+                )}
+                {invalidFiles.size > 0 && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">Skipped as invalid</span>
+                    <span className="text-xs text-destructive">{invalidFiles.size} file(s)</span>
                   </div>
                 )}
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium">Cache Status</span>
                   <span className={`text-xs ${allCached ? 'text-green-600' : 'text-orange-500'}`}>
-                    {allCached ? 'All files cached ✓' : `${cachedCount}/${included.length} cached`}
+                    {allCached ? 'All files cached ✓' : `${cachedCount}/${pushable.length} cached`}
                   </span>
                 </div>
               </div>
@@ -818,7 +1402,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                 </div>
                 <ScrollArea className="max-h-48">
                   <div className="divide-y">
-                    {included.map((f, i) => {
+                    {pushable.map((f, i) => {
                       const rp = getRelativePath(f);
                       const isCached = fileCacheRef.current.has(rp);
                       return (
@@ -836,20 +1420,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                   </div>
                 </ScrollArea>
               </div>
-
-              {/* Push progress */}
-              {pushing && (
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1.5">
-                      <Loader2 className="size-3 animate-spin" />
-                      Uploading to GitHub…
-                    </span>
-                    <span>{pushProgress}%</span>
-                  </div>
-                  <Progress value={pushProgress} />
-                </div>
-              )}
             </div>
           )}
         </div>
@@ -899,11 +1469,11 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
               </Button>
               <Button
                 onClick={handlePush}
-                disabled={pushing || included.length === 0 || !allCached}
+                disabled={pushing || pushable.length === 0 || !allCached}
                 className="gap-1.5"
               >
                 {pushing ? <Loader2 className="size-3.5 animate-spin" /> : <Upload className="size-3.5" />}
-                {pushing ? 'Pushing…' : `Push ${included.length} File(s)`}
+                {pushing ? 'Pushing…' : `Push ${pushable.length} File(s)`}
               </Button>
             </>
           )}

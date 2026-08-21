@@ -14,7 +14,7 @@ export function githubError(err: unknown): { message: string; status: number } {
 
   if (msg === 'RATE_LIMITED_AUTH') {
     return {
-      message: 'GitHub API rate limit exceeded even with your token. Please wait a few minutes before trying again.',
+      message: 'GitHub is rate-limiting these requests and retrying didn\'t resolve it in time. This is usually GitHub\'s secondary (abuse-prevention) limit rather than your hourly quota — wait a minute or two, then try the push again. If it keeps happening on the same repo, try pushing fewer files at once.',
       status: 429,
     };
   }

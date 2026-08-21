@@ -74,3 +74,4 @@ screenshot-*.png
 # OS
 .Spotlight-V100
 .Trashes
+.env*

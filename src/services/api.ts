@@ -13,6 +13,11 @@ import type {
   GitHubCreateRepoResult,
   GitHubCreateFileResult,
   GitHubMergeResult,
+  GitHubTag,
+  Project,
+  Changelog,
+  CategorizedChanges,
+  Voice,
 } from '@/types';
 
 const BASE = '/api';
@@ -145,6 +150,63 @@ export const github = {
     },
   },
 };
+
+// -------- Changelog Projects --------
+// NOTE: these back the standalone "Projects/Changelog" feature (wizard,
+// ProjectView, DashboardView in layout/). That feature is not currently
+// reachable from the app's navigation — these exist so the components
+// compile, not because the feature is wired up yet.
+
+export function validateRepo(data: { githubUrl: string; accessToken?: string }) {
+  return post<{
+    name: string;
+    fullName: string;
+    description: string | null;
+    htmlUrl: string;
+    stars: number;
+    owner: { login: string; avatar_url: string };
+  }>('/github/validate', data);
+}
+
+export function createProject(data: { githubUrl: string; accessToken?: string }) {
+  return post<Project>('/projects', data);
+}
+
+export function getProjects() {
+  return get<Project[]>('/projects');
+}
+
+export function getProject(id: string) {
+  return get<Project>(`/projects/${id}`);
+}
+
+export function deleteProject(id: string) {
+  return del<{ success: boolean }>(`/projects/${id}`);
+}
+
+export function getProjectChangelogs(id: string) {
+  return get<Changelog[]>(`/projects/${id}/changelogs`);
+}
+
+export function getTags(owner: string, repo: string, accessToken?: string) {
+  const params = new URLSearchParams({ owner, repo });
+  if (accessToken) params.set('accessToken', accessToken);
+  return get<GitHubTag[]>(`/github/tags?${params.toString()}`);
+}
+
+export function fetchChanges(data: { projectId: string; fromRef: string; toRef: string; includePRs?: boolean }) {
+  return post<CategorizedChanges>('/github/fetch', data);
+}
+
+export function generateChangelog(data: {
+  projectId: string; fromRef: string; toRef: string; voice: Voice; includePRs?: boolean;
+}) {
+  return post<Changelog>('/changelog/generate', data);
+}
+
+export function updateChangelog(id: string, data: { draftMarkdown?: string; status?: string; version?: string }) {
+  return put<Changelog>(`/changelog/${id}`, data);
+}
 
 // -------- AI --------
 export const ai = {

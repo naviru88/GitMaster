@@ -3,7 +3,10 @@
    ============================================================ */
 
 import { create } from 'zustand';
-import type { AppView, RepoTab, Account, GitHubRepo, GitHubContent, GitHubBranch, GitHubCommit, User } from '@/types';
+import type {
+  AppView, RepoTab, Account, GitHubRepo, GitHubContent, GitHubBranch, GitHubCommit, User,
+  Project, Changelog, GitHubTag, CategorizedChanges, Voice,
+} from '@/types';
 
 interface AppState {
   // Auth
@@ -58,6 +61,52 @@ interface AppState {
   loading: boolean;
   setLoading: (l: boolean) => void;
 
+  // ---- Changelog Projects feature (not yet wired into navigation) ----
+  projects: Project[];
+  setProjects: (p: Project[]) => void;
+  addProject: (p: Project) => void;
+  removeProject: (id: string) => void;
+  selectedProjectId: string | null;
+  selectProject: (id: string | null) => void;
+  selectedProject: Project | null;
+  setSelectedProject: (p: Project | null) => void;
+  isNewProjectDialogOpen: boolean;
+  setIsNewProjectDialogOpen: (o: boolean) => void;
+  validatedRepo: {
+    name: string;
+    fullName: string;
+    description: string | null;
+    htmlUrl: string;
+    stars: number;
+    owner: { login: string; avatar_url: string };
+  } | null;
+  setValidatedRepo: (r: AppState['validatedRepo']) => void;
+
+  tags: GitHubTag[];
+  setTags: (t: GitHubTag[]) => void;
+  fromRef: string;
+  setFromRef: (r: string) => void;
+  toRef: string;
+  setToRef: (r: string) => void;
+  includePRs: boolean;
+  setIncludePRs: (b: boolean) => void;
+
+  wizardStep: number;
+  setWizardStep: (s: number) => void;
+  categorizedChanges: CategorizedChanges | null;
+  setCategorizedChanges: (c: CategorizedChanges | null) => void;
+  voice: Voice;
+  setVoice: (v: Voice) => void;
+  isGenerating: boolean;
+  setIsGenerating: (b: boolean) => void;
+
+  projectChangelogs: Changelog[];
+  setProjectChangelogs: (c: Changelog[]) => void;
+  currentChangelog: Changelog | null;
+  setCurrentChangelog: (c: Changelog | null) => void;
+  editedMarkdown: string;
+  setEditedMarkdown: (m: string) => void;
+
   // Reset all state (for logout)
   resetAll: () => void;
 }
@@ -77,6 +126,22 @@ const initialState = {
   branches: [] as GitHubBranch[],
   commits: [] as GitHubCommit[],
   loading: false,
+  projects: [] as Project[],
+  selectedProjectId: null as string | null,
+  selectedProject: null as Project | null,
+  isNewProjectDialogOpen: false,
+  validatedRepo: null as AppState['validatedRepo'],
+  tags: [] as GitHubTag[],
+  fromRef: '',
+  toRef: '',
+  includePRs: true,
+  wizardStep: 1,
+  categorizedChanges: null as CategorizedChanges | null,
+  voice: 'developer' as Voice,
+  isGenerating: false,
+  projectChangelogs: [] as Changelog[],
+  currentChangelog: null as Changelog | null,
+  editedMarkdown: '',
 };
 
 export const useAppStore = create<AppState>((set) => ({
@@ -149,6 +214,49 @@ export const useAppStore = create<AppState>((set) => ({
   // Loading states
   loading: false,
   setLoading: (loading) => set({ loading }),
+
+  // ---- Changelog Projects feature (not yet wired into navigation) ----
+  projects: [],
+  setProjects: (projects) => set({ projects }),
+  addProject: (p) => set((s) => ({ projects: [p, ...s.projects] })),
+  removeProject: (id) => set((s) => ({
+    projects: s.projects.filter((p) => p.id !== id),
+    selectedProjectId: s.selectedProjectId === id ? null : s.selectedProjectId,
+    selectedProject: s.selectedProjectId === id ? null : s.selectedProject,
+  })),
+  selectedProjectId: null,
+  selectProject: (selectedProjectId) => set({ selectedProjectId }),
+  selectedProject: null,
+  setSelectedProject: (selectedProject) => set({ selectedProject }),
+  isNewProjectDialogOpen: false,
+  setIsNewProjectDialogOpen: (isNewProjectDialogOpen) => set({ isNewProjectDialogOpen }),
+  validatedRepo: null,
+  setValidatedRepo: (validatedRepo) => set({ validatedRepo }),
+
+  tags: [],
+  setTags: (tags) => set({ tags }),
+  fromRef: '',
+  setFromRef: (fromRef) => set({ fromRef }),
+  toRef: '',
+  setToRef: (toRef) => set({ toRef }),
+  includePRs: true,
+  setIncludePRs: (includePRs) => set({ includePRs }),
+
+  wizardStep: 1,
+  setWizardStep: (wizardStep) => set({ wizardStep }),
+  categorizedChanges: null,
+  setCategorizedChanges: (categorizedChanges) => set({ categorizedChanges }),
+  voice: 'developer',
+  setVoice: (voice) => set({ voice }),
+  isGenerating: false,
+  setIsGenerating: (isGenerating) => set({ isGenerating }),
+
+  projectChangelogs: [],
+  setProjectChangelogs: (projectChangelogs) => set({ projectChangelogs }),
+  currentChangelog: null,
+  setCurrentChangelog: (currentChangelog) => set({ currentChangelog }),
+  editedMarkdown: '',
+  setEditedMarkdown: (editedMarkdown) => set({ editedMarkdown }),
 
   // Reset all state (for logout)
   resetAll: () => set({
