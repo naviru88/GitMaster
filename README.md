@@ -36,17 +36,17 @@ Everything runs through your own Next.js server talking directly to `api.github.
 - Per-repo tabs for **Files**, **Branches**, and **Commits**
 - In-browser file viewer/editor for individual files
 
-### Push â the core feature
+### Push — the core feature
 This is the most heavily built-out part of the app, specifically designed to avoid the problems that come from uploading a raw folder through a browser:
 
-- **Drag-and-drop** whole folders (recursively) or individual files directly onto the push dialog â no reliance on the OS's native file picker, which can be unreliable on some Linux/browser combinations
+- **Drag-and-drop** whole folders (recursively) or individual files directly onto the push dialog — no reliance on the OS's native file picker, which can be unreliable on some Linux/browser combinations
 - **Automatic `.gitignore` detection**: if a `.gitignore` file is found in what you selected, its rules are used automatically; otherwise sensible defaults apply (`node_modules/`, `.git/`, `.DS_Store`, `*.log`, etc.)
-- **`.git/` is always excluded**, unconditionally and non-overridably â GitHub's API rejects any path containing a `.git` component outright, so this is enforced regardless of your `.gitignore` settings, both client- and server-side
+- **`.git/` is always excluded**, unconditionally and non-overridably — GitHub's API rejects any path containing a `.git` component outright, so this is enforced regardless of your `.gitignore` settings, both client- and server-side
 - **Per-file validation failsafe**: corrupted/unreadable files or anything over GitHub's 100MB blob limit are automatically skipped (with a reason shown) instead of failing the entire push
-- **Live progress feedback** at every stage â folder scanning, file caching/encoding, and the actual GitHub upload each show their own progress, pinned to a fixed spot in the dialog so it's never hidden by scrolling
+- **Live progress feedback** at every stage — folder scanning, file caching/encoding, and the actual GitHub upload each show their own progress, pinned to a fixed spot in the dialog so it's never hidden by scrolling
 - **Rate-limit aware**: automatically retries with backoff if GitHub's secondary (abuse-prevention) rate limit is hit, instead of failing the push outright
 - **Optimized upload path**: small text files are embedded directly into the Git tree in a single request rather than requiring a separate API call per file, which meaningfully cuts down the number of round-trips for a typical push (mostly source code)
-- No artificial cap on file count â GitHub's own Trees API doesn't have one either; only total payload size is guarded against
+- No artificial cap on file count — GitHub's own Trees API doesn't have one either; only total payload size is guarded against
 
 ### Pull
 - Download any branch of a repo as a `.zip` or `.tar.gz` archive directly to your machine
@@ -55,9 +55,9 @@ This is the most heavily built-out part of the app, specifically designed to avo
 - View, switch, and merge branches
 - Browse commit history per repo
 
-### AI Tools â *requires setup*
+### AI Tools — *requires setup*
 - A **commit message generator** and **README generator**, both AI-powered
-- â ï¸ **Out of the box these will not work.** They're wired up to `z-ai-web-dev-sdk`, an SDK tied to the specific cloud sandbox this project was originally scaffolded in â it has no API key of its own to configure and won't authenticate outside that environment. To use these features, replace the calls in `src/app/api/ai/commit-message/route.ts` and `src/app/api/ai/readme/route.ts` with a real LLM provider (e.g. the [Anthropic](https://docs.claude.com) or OpenAI SDK) and your own API key.
+- ⚠️ **Out of the box these will not work.** They're wired up to `z-ai-web-dev-sdk`, an SDK tied to the specific cloud sandbox this project was originally scaffolded in — it has no API key of its own to configure and won't authenticate outside that environment. To use these features, replace the calls in `src/app/api/ai/commit-message/route.ts` and `src/app/api/ai/readme/route.ts` with a real LLM provider (e.g. the [Anthropic](https://docs.claude.com) or OpenAI SDK) and your own API key.
 
 ---
 
