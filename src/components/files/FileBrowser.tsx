@@ -95,6 +95,7 @@ export default function FileBrowser() {
   const [deleteTarget, setDeleteTarget] = useState<GitHubContent | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteProgress, setDeleteProgress] = useState<{ done: number; total: number } | null>(null);
+  const [downloadingPath, setDownloadingPath] = useState<string | null>(null);
 
   const fetchContents = useCallback(async (path: string) => {
     if (!selectedAccountId || !selectedRepo) return;
@@ -122,6 +123,28 @@ export default function FileBrowser() {
 
   const handleDirClick = (item: GitHubContent) => {
     setFilePath(item.path);
+  };
+
+  const handleDownload = async (item: GitHubContent) => {
+    if (!selectedAccountId || !selectedRepo) return;
+    setDownloadingPath(item.path);
+    try {
+      const result = await github.contents.download(
+        selectedAccountId, selectedRepo.owner.login, selectedRepo.name, item.path,
+        selectedBranch || undefined,
+      );
+      const url = URL.createObjectURL(result.blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = item.type === 'dir' ? `${item.name}.tar.gz` : item.name;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      toast.success(`Downloaded ${item.name}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to download.');
+    } finally {
+      setDownloadingPath(null);
+    }
   };
 
   const handleFileClick = async (item: GitHubContent) => {
@@ -244,7 +267,7 @@ export default function FileBrowser() {
         <div className="flex items-center gap-2 shrink-0 flex-wrap">
           <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setPushOpen(true)}>
             <FolderUp className="size-3.5" />
-            Push Folder
+            Push File / Folder
           </Button>
           <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setPullOpen(true)}>
             <Download className="size-3.5" />
@@ -276,7 +299,7 @@ export default function FileBrowser() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-10" />
+              <TableHead className="w-20" />
               <TableHead>Name</TableHead>
               <TableHead className="w-24 text-right">Size</TableHead>
               <TableHead className="w-10" />
@@ -303,16 +326,25 @@ export default function FileBrowser() {
                   {item.type === 'file' ? formatSize(item.size) : '—'}
                 </TableCell>
                 <TableCell className="w-10">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setDeleteTarget(item);
-                    }}
-                    className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
-                    title={item.type === 'dir' ? 'Delete folder' : 'Delete file'}
-                  >
-                    <Trash2 className="size-3.5" />
-                  </button>
+                  <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleDownload(item); }}
+                      className="text-muted-foreground hover:text-foreground"
+                      title={item.type === 'dir' ? 'Download folder' : 'Download file'}
+                      disabled={downloadingPath === item.path}
+                    >
+                      {downloadingPath === item.path
+                        ? <Loader2 className="size-3.5 animate-spin" />
+                        : <Download className="size-3.5" />}
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setDeleteTarget(item); }}
+                      className="text-muted-foreground hover:text-destructive"
+                      title={item.type === 'dir' ? 'Delete folder' : 'Delete file'}
+                    >
+                      <Trash2 className="size-3.5" />
+                    </button>
+                  </div>
                 </TableCell>
               </TableRow>
             ))}

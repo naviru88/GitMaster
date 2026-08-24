@@ -104,6 +104,10 @@ export const github = {
       const params = new URLSearchParams({ accountId, owner, repo });
       return patch<GitHubRepo>(`/github/repos?${params.toString()}`, { private: isPrivate });
     },
+    updateDescription: (accountId: string, owner: string, repo: string, description: string) => {
+      const params = new URLSearchParams({ accountId, owner, repo });
+      return patch<GitHubRepo>(`/github/repos?${params.toString()}`, { description });
+    },
   },
 
   contents: {
@@ -121,6 +125,17 @@ export const github = {
       post<GitHubCreateFileResult>(`/github/contents?accountId=${accountId}`, { owner, repo, path, content, message, sha, branch, isBase64 }),
     deleteFile: (accountId: string, owner: string, repo: string, path: string, message: string, sha: string, branch?: string) =>
       post<{ success: boolean }>(`/github/contents?accountId=${accountId}&action=delete`, { owner, repo, path, message, sha, branch }),
+    download: (accountId: string, owner: string, repo: string, path: string, ref?: string) => {
+      const params = new URLSearchParams({ accountId, owner, repo, path });
+      if (ref) params.set('ref', ref);
+      return fetch(`${BASE}/github/download?${params.toString()}`).then(async (response) => {
+        if (!response.ok) {
+          const body = await response.json().catch(() => null);
+          throw new Error(body?.error || `Failed to download (${response.status})`);
+        }
+        return { blob: await response.blob(), filename: response.headers.get('content-disposition') || path.split('/').pop() || 'download' };
+      });
+    },
     // Deletes every file under a folder path, one commit per file, via
     // repeated deleteFile calls. GitHub's Contents API has no concept of a
     // "folder" as a real object (git only tracks files/blobs), so there's

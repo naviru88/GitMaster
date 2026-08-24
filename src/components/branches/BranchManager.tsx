@@ -169,9 +169,9 @@ export default function BranchManager() {
   const defaultBranch = selectedRepo?.default_branch || '';
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col space-y-6">
       {/* Create branch */}
-      <Card>
+      <Card className="order-2">
         <CardHeader className="pb-3">
           <CardTitle className="text-base">Create Branch</CardTitle>
         </CardHeader>
@@ -205,7 +205,7 @@ export default function BranchManager() {
       </Card>
 
       {/* Merge branches */}
-      <Card>
+      <Card className="order-3">
         <CardHeader className="pb-3">
           <CardTitle className="text-base">Merge Branches</CardTitle>
         </CardHeader>
@@ -244,10 +244,10 @@ export default function BranchManager() {
         </CardContent>
       </Card>
 
-      <Separator />
+      <Separator className="order-4" />
 
       {/* Branches table */}
-      <div>
+      <div className="order-1">
         <h3 className="text-base font-semibold mb-3">All Branches</h3>
         {branches.length === 0 ? (
           <p className="text-sm text-muted-foreground">No branches found.</p>

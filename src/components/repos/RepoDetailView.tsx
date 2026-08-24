@@ -2,7 +2,7 @@
 
 import React, { useEffect, useCallback, useState } from 'react';
 import { toast } from 'sonner';
-import { Star, GitFork, ExternalLink, ShieldCheck, Trash2, Eye, EyeOff } from 'lucide-react';
+import { Star, GitFork, ExternalLink, ShieldCheck, Trash2, Eye, EyeOff, Pencil } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 import { github } from '@/services/api';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -13,6 +13,7 @@ import BranchManager from '@/components/branches/BranchManager';
 import CommitList from '@/components/commits/CommitList';
 import DeleteRepoDialog from './DeleteRepoDialog';
 import ChangeVisibilityDialog from './ChangeVisibilityDialog';
+import EditRepoDescriptionDialog from './EditRepoDescriptionDialog';
 import type { RepoTab } from '@/types';
 
 export default function RepoDetailView() {
@@ -29,6 +30,7 @@ export default function RepoDetailView() {
   const setView = useAppStore((s) => s.setView);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [visibilityOpen, setVisibilityOpen] = useState(false);
+  const [descriptionOpen, setDescriptionOpen] = useState(false);
 
   const fetchBranches = useCallback(async () => {
     if (!selectedAccountId || !selectedRepo) return;
@@ -85,6 +87,11 @@ export default function RepoDetailView() {
     setSelectedRepo(updatedRepo);
     setRepos(repos.map((repo) => repo.id === updatedRepo.id ? updatedRepo : repo));
   };
+  const handleRepoUpdated = (updatedRepo: typeof selectedRepo) => {
+    if (!updatedRepo) return;
+    setSelectedRepo(updatedRepo);
+    setRepos(repos.map((repo) => repo.id === updatedRepo.id ? updatedRepo : repo));
+  };
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6">
@@ -101,9 +108,15 @@ export default function RepoDetailView() {
                 </Badge>
               )}
             </div>
-            {selectedRepo.description && (
-              <p className="text-sm text-muted-foreground mt-1">{selectedRepo.description}</p>
-            )}
+            <div className="flex items-center gap-2 mt-1">
+              <p className="text-sm text-muted-foreground">
+                {selectedRepo.description || 'No description'}
+              </p>
+              <Button variant="ghost" size="icon" className="size-7" onClick={() => setDescriptionOpen(true)} title="Edit description">
+                <Pencil className="size-3.5" />
+                <span className="sr-only">Edit description</span>
+              </Button>
+            </div>
             <div className="flex items-center gap-3 mt-2 text-sm text-muted-foreground flex-wrap">
               {selectedRepo.language && (
                 <Badge variant="outline" className="text-xs font-normal">{selectedRepo.language}</Badge>
@@ -173,6 +186,13 @@ export default function RepoDetailView() {
         accountId={selectedAccountId}
         repository={selectedRepo}
         onUpdated={handleVisibilityUpdated}
+      />
+      <EditRepoDescriptionDialog
+        open={descriptionOpen}
+        onOpenChange={setDescriptionOpen}
+        accountId={selectedAccountId}
+        repository={selectedRepo}
+        onUpdated={handleRepoUpdated}
       />
     </div>
   );

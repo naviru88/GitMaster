@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { listRepos, searchRepos, createRepo, deleteRepo, updateRepoVisibility } from '@/lib/github';
+import { listRepos, searchRepos, createRepo, deleteRepo, updateRepoVisibility, updateRepoDescription } from '@/lib/github';
 import { requireAuth, AuthError } from '@/lib/auth';
 
 export async function GET(req: NextRequest) {
@@ -78,9 +78,9 @@ export async function PATCH(req: NextRequest) {
     }
 
     const body = await req.json().catch(() => ({}));
-    if (typeof body.private !== 'boolean') {
+    if (typeof body.private !== 'boolean' && typeof body.description !== 'string') {
       return NextResponse.json(
-        { error: 'private must be a boolean' },
+        { error: 'private must be a boolean or description must be a string' },
         { status: 400 },
       );
     }
@@ -88,7 +88,9 @@ export async function PATCH(req: NextRequest) {
     const account = await db.account.findFirst({ where: { id: accountId, userId: user.id } });
     if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 });
 
-    const updatedRepo = await updateRepoVisibility(account.token, owner, repo, body.private);
+    const updatedRepo = typeof body.private === 'boolean'
+      ? await updateRepoVisibility(account.token, owner, repo, body.private)
+      : await updateRepoDescription(account.token, owner, repo, body.description.trim());
     return NextResponse.json(updatedRepo);
   } catch (err: unknown) {
     if (err instanceof AuthError) {

@@ -149,6 +149,22 @@ export async function updateRepoVisibility(
   );
 }
 
+export async function updateRepoDescription(
+  token: string | undefined,
+  owner: string,
+  repo: string,
+  description: string,
+) {
+  return ghFetch<import('@/types').GitHubRepo>(
+    `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
+    token,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ description }),
+    },
+  );
+}
+
 // -------- Contents --------
 export async function getContents(token: string | undefined, owner: string, repo: string, path: string, ref?: string) {
   let url: string;
