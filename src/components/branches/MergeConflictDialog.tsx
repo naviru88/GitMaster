@@ -43,9 +43,7 @@ interface MergeConflictDialogProps {
   onResolved: () => void;
 }
 
-/** A conflict the app genuinely cannot offer in-app resolution for — binary
- * content or something too large to safely load into a textarea. These
- * always fall back to "resolve via PR or local git" instead of an editor. */
+/** A conflict the app genuinely cannot offer in-app resolution for fall back to "resolve via PR or local git" instead of an editor. */
 function isUnresolvable(c: MergeConflictFile): boolean {
   return c.isBinary || c.tooLarge;
 }
@@ -78,10 +76,7 @@ export default function MergeConflictDialog({
       .then((result) => {
         if (cancelled) return;
         setCheck(result);
-        // Pre-fill each resolvable conflict's editor with head's version as
-        // a starting point — it's the incoming change, so it's usually
-        // closer to "what should win" than the base version, but it's just
-        // a starting point the user is expected to edit.
+        // Pre-fill each resolvable conflict's editor with head's version
         const initial = new Map<string, string | null>();
         for (const c of result.conflicts) {
           if (!isUnresolvable(c)) {

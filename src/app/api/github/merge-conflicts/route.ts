@@ -4,9 +4,7 @@ import { checkMergeConflicts, resolveMergeConflicts } from '@/lib/github';
 import { requireAuth, AuthError } from '@/lib/auth';
 import { githubError } from '@/lib/errors';
 
-// Fetching three file versions (ancestor/base/head) per conflicting path can
-// mean a real number of Contents API round-trips for a large diverging
-// history — give this more headroom than the default route timeout.
+// Fetching three file versions (ancestor/base/head) per conflicting path
 export const maxDuration = 60;
 
 /** GET — detect what actually conflicts between two branches, without
@@ -72,10 +70,6 @@ export async function POST(req: NextRequest) {
     }
 
     // Re-detect conflicts server-side rather than trusting the client's
-    // list of what needs resolving — the branches could have moved since
-    // the GET call, and this is also what catches an incomplete
-    // submission (e.g. a text conflict the user never actually resolved,
-    // or a binary/too-large one that can't be resolved in-app at all).
     const check = await checkMergeConflicts(account.token, owner, repo, base, head);
     const resolvedPaths = new Set(resolutions.map((r) => r.path));
     const unresolved = check.conflicts.filter((c) => !resolvedPaths.has(c.path));
@@ -84,9 +78,7 @@ export async function POST(req: NextRequest) {
         {
           error: `${unresolved.length} conflict(s) still need to be resolved before this merge can be committed.`,
           unresolvedPaths: unresolved.map((c) => c.path),
-          // Surfaced so the UI can tell the user exactly which files can't
-          // be resolved in-app at all (binary/too large) vs. which just
-          // haven't been filled in yet.
+          // Surfaced so the UI can tell the user exactly which files can't be resolved in-app
           blockedByBinaryOrSize: unresolved.filter((c) => c.isBinary || c.tooLarge).map((c) => c.path),
         },
         { status: 409 },
@@ -102,9 +94,6 @@ export async function POST(req: NextRequest) {
       message || `Merge ${head} into ${base}`,
       check.autoApplyPaths,
       // Only pass through resolutions for paths GitHub-side detection
-      // actually confirmed are conflicts — ignore anything else the client
-      // sent, so a resolution can't be used to smuggle in an arbitrary
-      // unrelated file write.
       resolutions.filter((r) => check.conflicts.some((c) => c.path === r.path)),
     );
     return NextResponse.json(result);
