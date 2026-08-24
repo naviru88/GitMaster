@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Separator } from '@/components/ui/separator';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import MergeConflictDialog from './MergeConflictDialog';
 import {
   Select,
   SelectContent,
@@ -42,6 +43,7 @@ export default function BranchManager() {
   const [mergeTarget, setMergeTarget] = useState('');
   const [merging, setMerging] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [conflictDialogOpen, setConflictDialogOpen] = useState(false);
 
   const fetchBranches = useCallback(async () => {
     if (!selectedAccountId || !selectedRepo) return;
@@ -124,7 +126,20 @@ export default function BranchManager() {
       setMergeTarget('');
       fetchBranches();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Merge failed.');
+      const raw = err instanceof Error ? err.message : '';
+      // A 409 here means GitHub found overlapping changes it can't combine
+      // automatically — this isn't something the app can resolve on its
+      // own, it needs a human to pick which changes win. Give a clear,
+      // actionable message instead of surfacing GitHub's raw JSON error.
+      if (/^GitHub API 409:/.test(raw) || /merge conflict/i.test(raw)) {
+        toast.error(`${mergeSource} and ${mergeTarget} have conflicting changes`, {
+          description: 'Opening the conflict resolver…',
+          duration: 4000,
+        });
+        setConflictDialogOpen(true);
+      } else {
+        toast.error(raw || 'Merge failed.');
+      }
     } finally {
       setMerging(false);
     }
@@ -299,6 +314,23 @@ export default function BranchManager() {
           </Table>
         )}
       </div>
+
+      {selectedAccountId && selectedRepo && mergeSource && mergeTarget && (
+        <MergeConflictDialog
+          open={conflictDialogOpen}
+          onOpenChange={setConflictDialogOpen}
+          accountId={selectedAccountId}
+          owner={selectedRepo.owner.login}
+          repo={selectedRepo.name}
+          base={mergeTarget}
+          head={mergeSource}
+          onResolved={() => {
+            setMergeSource('');
+            setMergeTarget('');
+            fetchBranches();
+          }}
+        />
+      )}
     </div>
   );
 }

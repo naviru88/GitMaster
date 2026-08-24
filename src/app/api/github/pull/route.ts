@@ -10,7 +10,8 @@ export async function GET(req: NextRequest) {
     const owner = req.nextUrl.searchParams.get('owner');
     const repo = req.nextUrl.searchParams.get('repo');
     const ref = req.nextUrl.searchParams.get('ref') || 'main';
-    const format = (req.nextUrl.searchParams.get('format') || 'zip') as 'zipball' | 'tarball';
+    const rawFormat = req.nextUrl.searchParams.get('format') || 'zip';
+    const format: 'zipball' | 'tarball' = rawFormat === 'tar.gz' || rawFormat === 'tarball' ? 'tarball' : 'zipball';
 
     if (!accountId || !owner || !repo) {
       return NextResponse.json({ error: 'accountId, owner, and repo are required.' }, { status: 400 });

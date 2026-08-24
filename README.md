@@ -1,6 +1,6 @@
 # GitMaster
 
-> A self-hosted, browser-based GUI for pushing, pulling, and managing GitHub repositories â built to replace the terminal `git add / commit / push` workflow with drag-and-drop file uploads, automatic `.gitignore` handling, and a proper account manager for multiple GitHub identities.
+> A self-hosted, browser-based GUI for pushing, pulling, and managing GitHub repositories — built to replace the terminal `git add / commit / push` workflow with drag-and-drop file uploads, automatic `.gitignore` handling, and a proper account manager for multiple GitHub identities.
 
 ![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?logo=typescript)
@@ -19,9 +19,9 @@ GitMaster connects to GitHub's REST API on your behalf (using a Personal Access 
 - **Browse** repo contents, switch branches, and view commit history
 - **Merge** branches
 - **Manage multiple GitHub accounts** side by side (e.g. personal + work), each with its own token
-- Optionally, **generate commit messages and READMEs with AI** (see [AI Tools](#ai-tools--requires-setup) below â this one needs a bit of configuration)
+- Optionally, **generate commit messages and READMEs with AI** (see [AI Tools](#ai-tools--requires-setup) below — this one needs a bit of configuration)
 
-Everything runs through your own Next.js server talking directly to `api.github.com` â there's no third-party backend in between.
+Everything runs through your own Next.js server talking directly to `api.github.com` — there's no third-party backend in between.
 
 ---
 
@@ -69,9 +69,9 @@ This project was originally scaffolded from a different template app (a GitHub c
 - `src/components/wizard/NewChangelogWizard.tsx`
 - `src/components/changelog/*`
 - `src/components/github/NewProjectDialog.tsx`
-- The `/api/projects/*` and `/api/changelog/*` routes â these reference a `Project`/`Changelog` Prisma model that no longer exists in `prisma/schema.prisma` (only `User` and `Account` are defined)
+- The `/api/projects/*` and `/api/changelog/*` routes — these reference a `Project`/`Changelog` Prisma model that no longer exists in `prisma/schema.prisma` (only `User` and `Account` are defined)
 
-None of this is reachable from the real app (`src/app/page.tsx` only renders `DashboardView` from `src/components/dashboard/`, `AccountReposView`, `RepoDetailView`, `FileEditor`, and `AIToolsView`), so it doesn't affect normal use â but if you're exploring the codebase, don't be surprised to find it. Safe to delete if you want a cleaner tree.
+None of this is reachable from the real app (`src/app/page.tsx` only renders `DashboardView` from `src/components/dashboard/`, `AccountReposView`, `RepoDetailView`, `FileEditor`, and `AIToolsView`), so it doesn't affect normal use — but if you're exploring the codebase, don't be surprised to find it. Safe to delete if you want a cleaner tree.
 
 ---
 
@@ -106,7 +106,7 @@ DATABASE_URL="file:./db/custom.db"
 JWT_SECRET="replace-with-any-long-random-string"
 ```
 
-Both are required. `DATABASE_URL` **must be a relative path** (`file:./db/custom.db`) â an absolute path baked in from a different machine/environment will fail with a permissions or "unable to open database file" error.
+Both are required. `DATABASE_URL` **must be a relative path** (`file:./db/custom.db`) — an absolute path baked in from a different machine/environment will fail with a permissions or "unable to open database file" error.
 
 ### 3. Set up the database
 
@@ -126,7 +126,7 @@ The app runs at **http://localhost:3000**.
 
 ### 5. Create an account and connect GitHub
 
-Sign up on first load (this creates a local `User` row), then add a GitHub account from within the app using a **Personal Access Token** (classic or fine-grained, with `repo` scope). That token is what powers push/pull/branch/commit operations â it's stored per-account in the local database.
+Sign up on first load (this creates a local `User` row), then add a GitHub account from within the app using a **Personal Access Token** (classic or fine-grained, with `repo` scope). That token is what powers push/pull/branch/commit operations — it's stored per-account in the local database.
 
 ---
 
@@ -141,7 +141,7 @@ Sign up on first load (this creates a local `User` row), then add a GitHub accou
 | `npm run db:push` | Apply the Prisma schema to the SQLite database |
 | `npm run db:generate` | Regenerate the Prisma client |
 | `npm run db:migrate` | Create a new Prisma migration |
-| `npm run db:reset` | Reset the database (â ï¸ destructive) |
+| `npm run db:reset` | Reset the database (⚠️ destructive) |
 
 ---
 
@@ -172,6 +172,7 @@ src/
 ├── services/api.ts        # Client-side fetch wrappers for the API routes above
 └── store/appStore.ts     # Zustand global state (view routing, accounts, selected repo, etc.)
 ```
+
 ---
 
 ## Deployment
@@ -179,10 +180,6 @@ src/
 `next.config.ts` is set to `output: "standalone"`, and a `Caddyfile` is included for reverse-proxy deployment behind Caddy. The `build`/`start` scripts assume this standalone/self-hosted setup (they run via `bun`) rather than a serverless platform like Vercel — adjust as needed if deploying elsewhere. If you do deploy to a platform with function timeouts (e.g. Vercel serverless), note that `src/app/api/github/push/route.ts` sets `maxDuration = 60`.
 
 ---
-
-## Hosting
-- [Live Site](https://gitmaster-omega.vercel.app)
-- [GitHub Repo](https://github.com/naviru88/GitMaster)
 
 ## License
 

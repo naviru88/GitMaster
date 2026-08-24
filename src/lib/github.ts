@@ -225,6 +225,266 @@ export async function mergeBranches(
   );
 }
 
+// -------- Merge conflict detection & resolution (Git Data API) --------
+// GitHub's /merges endpoint (mergeBranches above) is all-or-nothing: it
+// either fast-forwards/auto-merges, or 409s with no detail about what
+// actually conflicts. The functions below reconstruct enough of a real
+// 3-way merge by hand — using compare() to find what each branch touched
+// since they diverged, and the low-level blob/tree/commit endpoints (the
+// same ones batchCommit above already uses) to build a genuine merge
+// commit with two parents once conflicts are resolved.
+
+/** Three-dot compare (`base...head`) already computes the merge base
+ * internally and returns it — reuse that instead of a separate call. The
+ * `files` list here is everything head changed since diverging from base. */
+async function compareBranches(
+  token: string | undefined, owner: string, repo: string, base: string, head: string,
+) {
+  return ghFetch<{
+    merge_base_commit: { sha: string };
+    files?: Array<{ filename: string; status: string; previous_filename?: string }>;
+  }>(`${GITHUB_API}/repos/${owner}/${repo}/compare/${base}...${head}`, token);
+}
+
+/** Above this size, don't fetch/display content inline — same rationale as
+ * INLINE_MAX_BYTES for pushes, but conservative since this content also has
+ * to render in a textarea. */
+const CONFLICT_CONTENT_MAX_BYTES = 512 * 1024;
+
+interface FileVersion { content: string | null; isBinary: boolean; tooLarge: boolean; }
+
+/** Fetch a file's content at a given ref via the Contents API. Returns
+ * content: null (not binary/tooLarge) when the file doesn't exist at that
+ * ref — i.e. it was deleted relative to whichever version we're comparing
+ * against. */
+async function getFileVersion(
+  token: string | undefined, owner: string, repo: string, path: string, ref: string,
+): Promise<FileVersion> {
+  let file: import('@/types').GitHubContent;
+  try {
+    file = await ghFetch<import('@/types').GitHubContent>(
+      `${GITHUB_API}/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(ref)}`,
+      token,
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : '';
+    if (msg.startsWith('GitHub API 404')) {
+      return { content: null, isBinary: false, tooLarge: false };
+    }
+    throw err;
+  }
+
+  if (Array.isArray(file)) {
+    // Path is a directory, not a file — shouldn't happen for a real
+    // conflict path, but guard against it rather than crash.
+    return { content: null, isBinary: false, tooLarge: false };
+  }
+  if (file.size > CONFLICT_CONTENT_MAX_BYTES || !file.content) {
+    return { content: null, isBinary: false, tooLarge: true };
+  }
+
+  let buf: Buffer;
+  try {
+    buf = Buffer.from(file.content, (file.encoding as BufferEncoding) || 'base64');
+  } catch {
+    return { content: null, isBinary: true, tooLarge: false };
+  }
+  if (buf.includes(0)) {
+    return { content: null, isBinary: true, tooLarge: false };
+  }
+  try {
+    return { content: new TextDecoder('utf-8', { fatal: true }).decode(buf), isBinary: false, tooLarge: false };
+  } catch {
+    return { content: null, isBinary: true, tooLarge: false };
+  }
+}
+
+export async function checkMergeConflicts(
+  token: string | undefined, owner: string, repo: string, base: string, head: string,
+): Promise<import('@/types').MergeConflictCheckResult> {
+  const [baseSha, headSha] = await Promise.all([
+    getBranchSha(token, owner, repo, base).then((r) => r.object.sha),
+    getBranchSha(token, owner, repo, head).then((r) => r.object.sha),
+  ]);
+
+  // Each direction's compare gives that branch's own changes since the
+  // shared ancestor — exactly the two sides of a 3-way merge.
+  const [headSideCompare, baseSideCompare] = await Promise.all([
+    compareBranches(token, owner, repo, base, head), // what head changed
+    compareBranches(token, owner, repo, head, base), // what base changed
+  ]);
+  const mergeBaseSha = headSideCompare.merge_base_commit.sha;
+
+  const headChanges = new Map((headSideCompare.files || []).map((f) => [f.filename, f]));
+  const baseChanges = new Map((baseSideCompare.files || []).map((f) => [f.filename, f]));
+
+  const autoApplyPaths: string[] = [];
+  const overlapPaths: string[] = [];
+  for (const path of headChanges.keys()) {
+    if (baseChanges.has(path)) overlapPaths.push(path);
+    else autoApplyPaths.push(path);
+  }
+
+  // Fetch the three versions of every overlapping path in parallel (bounded)
+  // so a large diverging history doesn't serialize into dozens of
+  // round-trips.
+  const CONTENT_FETCH_CONCURRENCY = 6;
+  const conflicts: import('@/types').MergeConflictFile[] = [];
+  await runWithConcurrency(overlapPaths, CONTENT_FETCH_CONCURRENCY, async (path) => {
+    const [ancestor, baseVer, headVer] = await Promise.all([
+      getFileVersion(token, owner, repo, path, mergeBaseSha),
+      getFileVersion(token, owner, repo, path, baseSha),
+      getFileVersion(token, owner, repo, path, headSha),
+    ]);
+
+    // If both sides ended up with identical content (e.g. both merged in
+    // the same upstream change, or one side's edit is a no-op relative to
+    // the other), there's nothing to actually resolve — auto-apply it
+    // instead of bothering the user.
+    if (baseVer.content !== null && baseVer.content === headVer.content) {
+      autoApplyPaths.push(path);
+      return;
+    }
+
+    let kind: import('@/types').ConflictKind;
+    if (ancestor.content === null && baseVer.content !== null && headVer.content !== null) {
+      kind = 'both-added';
+    } else if (baseVer.content === null && headVer.content !== null) {
+      kind = 'deleted-modified';
+    } else if (baseVer.content !== null && headVer.content === null) {
+      kind = 'modified-deleted';
+    } else {
+      kind = 'both-modified';
+    }
+
+    conflicts.push({
+      path,
+      kind,
+      ancestorContent: ancestor.content,
+      baseContent: baseVer.content,
+      headContent: headVer.content,
+      isBinary: ancestor.isBinary || baseVer.isBinary || headVer.isBinary,
+      tooLarge: ancestor.tooLarge || baseVer.tooLarge || headVer.tooLarge,
+    });
+  });
+
+  return {
+    hasConflicts: conflicts.length > 0,
+    mergeBaseSha,
+    baseSha,
+    headSha,
+    autoApplyPaths,
+    conflicts,
+  };
+}
+
+export async function resolveMergeConflicts(
+  token: string,
+  owner: string,
+  repo: string,
+  base: string,
+  head: string,
+  message: string,
+  autoApplyPaths: string[],
+  resolutions: Array<{ path: string; content: string | null }>,
+): Promise<import('@/types').MergeConflictResolveResult> {
+  const [baseSha, headSha] = await Promise.all([
+    getBranchSha(token, owner, repo, base).then((r) => r.object.sha),
+    getBranchSha(token, owner, repo, head).then((r) => r.object.sha),
+  ]);
+
+  const baseCommit = await ghFetch<{ tree: { sha: string } }>(
+    `${GITHUB_API}/repos/${owner}/${repo}/git/commits/${baseSha}`,
+    token,
+  );
+
+  type TreeEntry = { path: string; mode: '100644'; type: 'blob'; sha: string | null };
+
+  // Auto-applied files: reference head's existing blob directly instead of
+  // re-uploading content we already know GitHub has — this is the same
+  // "skip the round-trip when possible" idea as tryInlineText in
+  // batchCommit, just via an existing blob sha instead of inline content.
+  //
+  // A 404 here means head *deleted* this path (it's an auto-apply path
+  // precisely because only head touched it) — that has to become an
+  // explicit deletion in the merge tree (sha: null), not just an omitted
+  // entry, or the file would silently survive by inheriting base_tree's
+  // untouched copy.
+  const AUTO_APPLY_CONCURRENCY = 6;
+  const autoEntries = await runWithConcurrency(autoApplyPaths, AUTO_APPLY_CONCURRENCY, async (path): Promise<TreeEntry> => {
+    const file = await ghFetch<import('@/types').GitHubContent | null>(
+      `${GITHUB_API}/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(headSha)}`,
+      token,
+    ).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : '';
+      if (msg.startsWith('GitHub API 404')) return null; // deleted on head
+      throw err;
+    });
+    if (!file || Array.isArray(file)) {
+      return { path, mode: '100644', type: 'blob', sha: null }; // delete from the merge tree
+    }
+    return { path, mode: '100644', type: 'blob', sha: file.sha };
+  });
+
+  // Resolved conflicts: create a fresh blob for each resolution's content,
+  // or an explicit deletion entry when the user chose to resolve by
+  // removing the file.
+  const RESOLUTION_CONCURRENCY = 3; // content-creating writes — see batchCommit's note on abuse detection
+  const resolutionEntries = await runWithConcurrency(resolutions, RESOLUTION_CONCURRENCY, async (r): Promise<TreeEntry> => {
+    if (r.content === null) {
+      return { path: r.path, mode: '100644', type: 'blob', sha: null };
+    }
+    const blob = await ghFetch<{ sha: string }>(
+      `${GITHUB_API}/repos/${owner}/${repo}/git/blobs`,
+      token,
+      { method: 'POST', body: JSON.stringify({ content: r.content, encoding: 'utf-8' }) },
+    );
+    return { path: r.path, mode: '100644', type: 'blob', sha: blob.sha };
+  });
+
+  const tree = await ghFetch<{ sha: string }>(
+    `${GITHUB_API}/repos/${owner}/${repo}/git/trees`,
+    token,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        base_tree: baseCommit.tree.sha,
+        tree: [...autoEntries, ...resolutionEntries],
+      }),
+    },
+  );
+
+  const commit = await ghFetch<{ sha: string }>(
+    `${GITHUB_API}/repos/${owner}/${repo}/git/commits`,
+    token,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        message,
+        tree: tree.sha,
+        // A genuine merge commit — two parents, exactly like `git merge`
+        // produces locally. This is what makes GitHub (and any later
+        // `git log --graph`) recognize this as base's history absorbing
+        // head's changes, not just a regular commit that happens to look
+        // similar.
+        parents: [baseSha, headSha],
+      }),
+    },
+  );
+
+  await ghFetch<{ object: { sha: string } }>(
+    `${GITHUB_API}/repos/${owner}/${repo}/git/refs/heads/${base}`,
+    token,
+    { method: 'PATCH', body: JSON.stringify({ sha: commit.sha }) },
+  );
+
+  return {
+    sha: commit.sha,
+    filesResolved: resolutionEntries.length,
+    filesAutoApplied: autoEntries.length,
+  };
+}
+
 // -------- Commits --------
 export async function listCommits(token: string | undefined, owner: string, repo: string, sha?: string, page = 1, perPage = 30) {
   const params = new URLSearchParams({ per_page: String(perPage), page: String(page) });

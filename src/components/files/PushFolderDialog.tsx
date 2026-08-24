@@ -1286,7 +1286,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                     </span>
                     <span>{formatSize(totalSize)}</span>
                   </div>
-                  <ScrollArea className="max-h-48">
+                  <ScrollArea className="max-h-[45vh]" viewportClassName="overscroll-contain">
                     <div className="divide-y">
                       {included.map((f, i) => {
                         const rp = getRelativePath(f);
@@ -1397,16 +1397,17 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
 
               {/* File list */}
               <div className="border rounded-lg overflow-hidden">
-                <div className="px-3 py-2 bg-muted/50 border-b text-xs text-muted-foreground font-medium">
-                  Files to push
+                <div className="px-3 py-2 bg-muted/50 border-b text-xs text-muted-foreground font-medium flex items-center justify-between">
+                  <span>Files to push</span>
+                  <span className="text-muted-foreground/70">Hover a row to remove it</span>
                 </div>
-                <ScrollArea className="max-h-48">
+                <ScrollArea className="max-h-[50vh]" viewportClassName="overscroll-contain">
                   <div className="divide-y">
                     {pushable.map((f, i) => {
                       const rp = getRelativePath(f);
                       const isCached = fileCacheRef.current.has(rp);
                       return (
-                        <div key={`rev-${i}`} className="flex items-center gap-2 px-3 py-1.5 text-sm">
+                        <div key={`rev-${i}`} className="group flex items-center gap-2 px-3 py-1.5 text-sm">
                           {isCached ? (
                             <Check className="size-3.5 text-green-600 shrink-0" />
                           ) : (
@@ -1414,6 +1415,15 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                           )}
                           <span className="flex-1 truncate font-mono text-xs" title={rp}>{rp}</span>
                           <span className="text-xs text-muted-foreground shrink-0">{formatSize(f.size)}</span>
+                          {!pushing && (
+                            <button
+                              onClick={() => removeFile(rawFiles.indexOf(f))}
+                              className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity shrink-0"
+                              title="Remove from this push"
+                            >
+                              <X className="size-3.5" />
+                            </button>
+                          )}
                         </div>
                       );
                     })}

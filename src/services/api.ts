@@ -14,6 +14,8 @@ import type {
   GitHubCreateFileResult,
   GitHubMergeResult,
   GitHubTag,
+  MergeConflictCheckResult,
+  MergeConflictResolveResult,
   Project,
   Changelog,
   CategorizedChanges,
@@ -102,7 +104,34 @@ export const github = {
     saveFile: (accountId: string, owner: string, repo: string, path: string, content: string, message: string, sha?: string, branch?: string, isBase64?: boolean) =>
       post<GitHubCreateFileResult>(`/github/contents?accountId=${accountId}`, { owner, repo, path, content, message, sha, branch, isBase64 }),
     deleteFile: (accountId: string, owner: string, repo: string, path: string, message: string, sha: string, branch?: string) =>
-      post<void>(`/github/contents/delete?accountId=${accountId}`, { owner, repo, path, message, sha, branch }),
+      post<{ success: boolean }>(`/github/contents?accountId=${accountId}&action=delete`, { owner, repo, path, message, sha, branch }),
+    // Deletes every file under a folder path, one commit per file, via
+    // repeated deleteFile calls. GitHub's Contents API has no concept of a
+    // "folder" as a real object (git only tracks files/blobs), so there's
+    // no single endpoint to delete a directory — this is the closest
+    // equivalent: list everything under the path, then remove each file.
+    deleteFolder: async (
+      accountId: string, owner: string, repo: string, folderPath: string, message: string, branch?: string,
+      onProgress?: (done: number, total: number) => void,
+    ) => {
+      const files: { path: string; sha: string }[] = [];
+      const collect = async (path: string) => {
+        const entries = await github.contents.list(accountId, owner, repo, path, branch);
+        for (const entry of entries) {
+          if (entry.type === 'dir') {
+            await collect(entry.path);
+          } else {
+            files.push({ path: entry.path, sha: entry.sha });
+          }
+        }
+      };
+      await collect(folderPath);
+      for (let i = 0; i < files.length; i++) {
+        await github.contents.deleteFile(accountId, owner, repo, files[i].path, message, files[i].sha, branch);
+        onProgress?.(i + 1, files.length);
+      }
+      return { deletedCount: files.length };
+    },
   },
 
   branches: {
@@ -124,6 +153,18 @@ export const github = {
   merge: {
     merge: (accountId: string, owner: string, repo: string, base: string, head: string, message?: string) =>
       post<GitHubMergeResult>(`/github/merge?accountId=${accountId}`, { owner, repo, base, head, message }),
+    // -------- Conflict detection & in-app resolution --------
+    checkConflicts: (accountId: string, owner: string, repo: string, base: string, head: string) => {
+      const params = new URLSearchParams({ accountId, owner, repo, base, head });
+      return get<MergeConflictCheckResult>(`/github/merge-conflicts?${params.toString()}`);
+    },
+    resolveConflicts: (
+      accountId: string, owner: string, repo: string, base: string, head: string,
+      autoApplyPaths: string[], resolutions: Array<{ path: string; content: string | null }>, message?: string,
+    ) =>
+      post<MergeConflictResolveResult>(`/github/merge-conflicts?accountId=${accountId}`, {
+        owner, repo, base, head, message, autoApplyPaths, resolutions,
+      }),
   },
 
   // -------- Push (batch commit) --------
@@ -143,8 +184,11 @@ export const github = {
   pull: {
     download: (accountId: string, owner: string, repo: string, ref: string, format?: 'zip' | 'tar.gz') => {
       const params = new URLSearchParams({ accountId, owner, repo, ref, format: format || 'zip' });
-      return fetch(`${BASE}/github/pull?${params.toString()}`).then((r) => {
-        if (!r.ok) throw new Error('Failed to download archive');
+      return fetch(`${BASE}/github/pull?${params.toString()}`).then(async (r) => {
+        if (!r.ok) {
+          const body = await r.json().catch(() => null);
+          throw new Error(body?.error || `Failed to download archive (${r.status})`);
+        }
         return r.blob();
       });
     },
