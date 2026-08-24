@@ -77,7 +77,12 @@ async function ghFetch<T>(url: string, token?: string, init?: RequestInit, retri
     const body = await res.text();
     throw new Error(`GitHub API ${res.status}: ${body.slice(0, 300)}`);
   }
-  return res.json();
+  // Some successful GitHub endpoints (notably a merge that is already
+  // complete) can return 204 or another empty successful response. Calling
+  // res.json() unconditionally turns that valid result into
+  // "Unexpected end of JSON input".
+  const body = await res.text();
+  return (body ? JSON.parse(body) : undefined) as T;
 }
 
 // -------- User / Validate --------
@@ -234,11 +239,16 @@ export async function mergeBranches(
   token: string | undefined, owner: string, repo: string, base: string, head: string,
   commitMessage?: string,
 ) {
-  return ghFetch<import('@/types').GitHubMergeResult>(
+  const result = await ghFetch<import('@/types').GitHubMergeResult | undefined>(
     `${GITHUB_API}/repos/${owner}/${repo}/merges`,
     token,
     { method: 'POST', body: JSON.stringify({ base, head, commit_message: commitMessage || `Merge ${head} into ${base}` }) },
   );
+  return result ?? {
+    sha: '',
+    merged: true,
+    message: 'Branches were already merged.',
+  };
 }
 
 // -------- Merge conflict detection & resolution (Git Data API) --------
