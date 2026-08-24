@@ -680,7 +680,7 @@ export async function batchCommit(
 // -------- Archive (Pull / Clone) --------
 // Returns the download URL for a repo archive (zip or tar.gz)
 export function getArchiveUrl(owner: string, repo: string, ref: string, format: 'zipball' | 'tarball' = 'zipball') {
-  return `${GITHUB_API}/repos/${owner}/${repo}/${format}/${ref}`;
+  return `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${format}/${encodeURIComponent(ref)}`;
 }
 
 // -------- Changelog generator support --------

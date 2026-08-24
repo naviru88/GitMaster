@@ -25,7 +25,11 @@ export async function GET(req: NextRequest) {
     const ghRes = await fetch(archiveUrl, {
       headers: {
         Authorization: `Bearer ${account.token}`,
-        Accept: 'application/octet-stream',
+        // GitHub's archive endpoints return the binary after a redirect, but
+        // the API endpoint itself now rejects octet-stream as an Accept type.
+        // Ask for the JSON API representation and let fetch follow the
+        // redirect to the archive host.
+        Accept: 'application/json',
       },
       redirect: 'follow',
     });
