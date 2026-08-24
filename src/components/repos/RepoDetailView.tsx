@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useEffect, useCallback } from 'react';
+import React, { useEffect, useCallback, useState } from 'react';
 import { toast } from 'sonner';
-import { Star, GitFork, ExternalLink, ShieldCheck } from 'lucide-react';
+import { Star, GitFork, ExternalLink, ShieldCheck, Trash2 } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 import { github } from '@/services/api';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import FileBrowser from '@/components/files/FileBrowser';
 import BranchManager from '@/components/branches/BranchManager';
 import CommitList from '@/components/commits/CommitList';
+import DeleteRepoDialog from './DeleteRepoDialog';
 import type { RepoTab } from '@/types';
 
 export default function RepoDetailView() {
@@ -21,6 +22,11 @@ export default function RepoDetailView() {
   const setRepoTab = useAppStore((s) => s.setRepoTab);
   const setBranches = useAppStore((s) => s.setBranches);
   const setCommits = useAppStore((s) => s.setCommits);
+  const repos = useAppStore((s) => s.repos);
+  const setRepos = useAppStore((s) => s.setRepos);
+  const setSelectedRepo = useAppStore((s) => s.setSelectedRepo);
+  const setView = useAppStore((s) => s.setView);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   const fetchBranches = useCallback(async () => {
     if (!selectedAccountId || !selectedRepo) return;
@@ -67,6 +73,11 @@ export default function RepoDetailView() {
   }
 
   const tabValue: string = repoTab;
+  const handleDeleted = () => {
+    setRepos(repos.filter((repo) => repo.id !== selectedRepo.id));
+    setSelectedRepo(null);
+    setView('account-repos');
+  };
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6">
@@ -95,12 +106,23 @@ export default function RepoDetailView() {
               <span className="text-xs">Branch: <code className="rounded bg-muted px-1.5 py-0.5 text-xs font-mono">{selectedBranch}</code></span>
             </div>
           </div>
-          <Button variant="outline" size="sm" asChild>
-            <a href={selectedRepo.html_url} target="_blank" rel="noopener noreferrer" className="gap-1.5">
-              <ExternalLink className="size-3.5" />
-              GitHub
-            </a>
-          </Button>
+          <div className="flex items-center gap-2 shrink-0">
+            <Button variant="outline" size="sm" asChild>
+              <a href={selectedRepo.html_url} target="_blank" rel="noopener noreferrer" className="gap-1.5">
+                <ExternalLink className="size-3.5" />
+                GitHub
+              </a>
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => setDeleteOpen(true)}
+              className="gap-1.5"
+            >
+              <Trash2 className="size-3.5" />
+              Delete
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -121,6 +143,14 @@ export default function RepoDetailView() {
           <CommitList />
         </TabsContent>
       </Tabs>
+      <DeleteRepoDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        accountId={selectedAccountId}
+        owner={selectedRepo.owner.login}
+        repo={selectedRepo.name}
+        onDeleted={handleDeleted}
+      />
     </div>
   );
 }

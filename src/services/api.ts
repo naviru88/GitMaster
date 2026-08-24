@@ -86,8 +86,10 @@ export const github = {
       get<{ items: GitHubRepo[]; totalCount: number }>(`/github/repos?accountId=${accountId}&q=${encodeURIComponent(query)}&page=${page || 1}`),
     create: (accountId: string, opts: { name: string; description?: string; private?: boolean }) =>
       post<GitHubCreateRepoResult>(`/github/repos?accountId=${accountId}`, opts),
-    delete: (accountId: string, owner: string, repo: string) =>
-      del<void>(`/github/repos?accountId=${accountId}&owner=${owner}&repo=${repo}`),
+    delete: (accountId: string, owner: string, repo: string) => {
+      const params = new URLSearchParams({ accountId, owner, repo });
+      return del<{ success: boolean }>(`/github/repos?${params.toString()}`);
+    },
   },
 
   contents: {

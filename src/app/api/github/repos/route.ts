@@ -35,12 +35,38 @@ export async function GET(req: NextRequest) {
   }
 }
 
-export async function POST(req: NextRequest) {
+export async function DELETE(req: NextRequest) {
   try {
     const user = await requireAuth(req);
     const accountId = req.nextUrl.searchParams.get('accountId');
     const owner = req.nextUrl.searchParams.get('owner');
     const repo = req.nextUrl.searchParams.get('repo');
+
+    if (!accountId || !owner || !repo) {
+      return NextResponse.json(
+        { error: 'accountId, owner, and repo are required' },
+        { status: 400 },
+      );
+    }
+
+    const account = await db.account.findFirst({ where: { id: accountId, userId: user.id } });
+    if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 });
+
+    await deleteRepo(account.token, owner, repo);
+    return NextResponse.json({ success: true });
+  } catch (err: unknown) {
+    if (err instanceof AuthError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
+    const message = err instanceof Error ? err.message : 'Failed to delete repo';
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const user = await requireAuth(req);
+    const accountId = req.nextUrl.searchParams.get('accountId');
 
     if (!accountId) {
       return NextResponse.json({ error: 'accountId is required' }, { status: 400 });
@@ -48,12 +74,6 @@ export async function POST(req: NextRequest) {
 
     const account = await db.account.findFirst({ where: { id: accountId, userId: user.id } });
     if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 });
-
-    // If owner + repo are in query, treat as DELETE
-    if (owner && repo) {
-      await deleteRepo(account.token, owner, repo);
-      return NextResponse.json({ success: true });
-    }
 
     // Otherwise create a new repo
     const body = await req.json();

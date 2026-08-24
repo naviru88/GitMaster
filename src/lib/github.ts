@@ -118,7 +118,7 @@ export async function createRepo(
 }
 
 export async function deleteRepo(token: string | undefined, owner: string, repo: string) {
-  const res = await fetch(`${GITHUB_API}/repos/${owner}/${repo}`, {
+  const res = await fetch(`${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`, {
     method: 'DELETE',
     headers: headers(token),
   });
