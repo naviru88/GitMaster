@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import Markdown from 'react-markdown';
 import { toast } from 'sonner';
-import { ArrowLeft, Save, Download, Trash2, Sparkles, Loader2, FileText } from 'lucide-react';
+import { ArrowLeft, Save, Download, Trash2, Sparkles, Loader2, FileText, Clock3 } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 import { github, ai } from '@/services/api';
 import { Button } from '@/components/ui/button';
@@ -20,6 +20,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import VersionHistoryDialog from './VersionHistoryDialog';
 
 export default function FileEditor() {
   const selectedAccountId = useAppStore((s) => s.selectedAccountId);
@@ -38,6 +39,7 @@ export default function FileEditor() {
   const [generating, setGenerating] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   useEffect(() => {
     if (openedFile) {
@@ -229,6 +231,10 @@ export default function FileEditor() {
             <Download className="size-3.5" />
             Download
           </Button>
+          <Button variant="outline" size="sm" onClick={() => setHistoryOpen(true)} className="gap-1.5">
+            <Clock3 className="size-3.5" />
+            Versions
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -262,6 +268,15 @@ export default function FileEditor() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <VersionHistoryDialog
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        accountId={selectedAccountId || ''}
+        owner={selectedRepo?.owner.login || ''}
+        repo={selectedRepo?.name || ''}
+        branch={selectedBranch}
+        file={openedFile.content}
+      />
     </div>
   );
 }

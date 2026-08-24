@@ -173,10 +173,11 @@ export const github = {
   },
 
   commits: {
-    list: (accountId: string, owner: string, repo: string, sha?: string, page?: number) => {
+    list: (accountId: string, owner: string, repo: string, sha?: string, page?: number, path?: string) => {
       const params = new URLSearchParams({ accountId, owner, repo });
       if (sha) params.set('sha', sha);
       if (page) params.set('page', String(page));
+      if (path) params.set('path', path);
       return get<GitHubCommit[]>(`/github/commits?${params.toString()}`);
     },
   },

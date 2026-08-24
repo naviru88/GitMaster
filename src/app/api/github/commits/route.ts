@@ -11,6 +11,7 @@ export async function GET(req: NextRequest) {
     const repo = req.nextUrl.searchParams.get('repo');
     const sha = req.nextUrl.searchParams.get('sha') ?? undefined;
     const page = Number(req.nextUrl.searchParams.get('page') ?? '1');
+    const path = req.nextUrl.searchParams.get('path') ?? undefined;
 
     if (!accountId || !owner || !repo) {
       return NextResponse.json({ error: 'accountId, owner, and repo are required' }, { status: 400 });
@@ -19,7 +20,7 @@ export async function GET(req: NextRequest) {
     const account = await db.account.findFirst({ where: { id: accountId, userId: user.id } });
     if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 });
 
-    const commits = await listCommits(account.token, owner, repo, sha, page);
+    const commits = await listCommits(account.token, owner, repo, sha, page, 30, path);
     return NextResponse.json(commits);
   } catch (err: unknown) {
     if (err instanceof AuthError) {

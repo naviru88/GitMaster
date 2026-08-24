@@ -531,9 +531,12 @@ export async function resolveMergeConflicts(
 }
 
 // -------- Commits --------
-export async function listCommits(token: string | undefined, owner: string, repo: string, sha?: string, page = 1, perPage = 30) {
+export async function listCommits(
+  token: string | undefined, owner: string, repo: string, sha?: string, page = 1, perPage = 30, path?: string,
+) {
   const params = new URLSearchParams({ per_page: String(perPage), page: String(page) });
   if (sha) params.set('sha', sha);
+  if (path) params.set('path', path);
   return ghFetch<import('@/types').GitHubCommit[]>(
     `${GITHUB_API}/repos/${owner}/${repo}/commits?${params.toString()}`,
     token,
