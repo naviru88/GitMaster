@@ -2,7 +2,7 @@
 
 import React, { useEffect, useCallback, useState } from 'react';
 import { toast } from 'sonner';
-import { Star, GitFork, ExternalLink, ShieldCheck, Trash2 } from 'lucide-react';
+import { Star, GitFork, ExternalLink, ShieldCheck, Trash2, Eye, EyeOff } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 import { github } from '@/services/api';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -12,6 +12,7 @@ import FileBrowser from '@/components/files/FileBrowser';
 import BranchManager from '@/components/branches/BranchManager';
 import CommitList from '@/components/commits/CommitList';
 import DeleteRepoDialog from './DeleteRepoDialog';
+import ChangeVisibilityDialog from './ChangeVisibilityDialog';
 import type { RepoTab } from '@/types';
 
 export default function RepoDetailView() {
@@ -27,6 +28,7 @@ export default function RepoDetailView() {
   const setSelectedRepo = useAppStore((s) => s.setSelectedRepo);
   const setView = useAppStore((s) => s.setView);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [visibilityOpen, setVisibilityOpen] = useState(false);
 
   const fetchBranches = useCallback(async () => {
     if (!selectedAccountId || !selectedRepo) return;
@@ -78,6 +80,11 @@ export default function RepoDetailView() {
     setSelectedRepo(null);
     setView('account-repos');
   };
+  const handleVisibilityUpdated = (updatedRepo: typeof selectedRepo) => {
+    if (!updatedRepo) return;
+    setSelectedRepo(updatedRepo);
+    setRepos(repos.map((repo) => repo.id === updatedRepo.id ? updatedRepo : repo));
+  };
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6">
@@ -112,6 +119,15 @@ export default function RepoDetailView() {
                 <ExternalLink className="size-3.5" />
                 GitHub
               </a>
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setVisibilityOpen(true)}
+              className="gap-1.5"
+            >
+              {selectedRepo.private ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />}
+              {selectedRepo.private ? 'Make public' : 'Make private'}
             </Button>
             <Button
               variant="destructive"
@@ -150,6 +166,13 @@ export default function RepoDetailView() {
         owner={selectedRepo.owner.login}
         repo={selectedRepo.name}
         onDeleted={handleDeleted}
+      />
+      <ChangeVisibilityDialog
+        open={visibilityOpen}
+        onOpenChange={setVisibilityOpen}
+        accountId={selectedAccountId}
+        repository={selectedRepo}
+        onUpdated={handleVisibilityUpdated}
       />
     </div>
   );

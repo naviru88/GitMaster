@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { listRepos, searchRepos, createRepo, deleteRepo } from '@/lib/github';
+import { listRepos, searchRepos, createRepo, deleteRepo, updateRepoVisibility } from '@/lib/github';
 import { requireAuth, AuthError } from '@/lib/auth';
 
 export async function GET(req: NextRequest) {
@@ -59,6 +59,42 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }
     const message = err instanceof Error ? err.message : 'Failed to delete repo';
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+export async function PATCH(req: NextRequest) {
+  try {
+    const user = await requireAuth(req);
+    const accountId = req.nextUrl.searchParams.get('accountId');
+    const owner = req.nextUrl.searchParams.get('owner');
+    const repo = req.nextUrl.searchParams.get('repo');
+
+    if (!accountId || !owner || !repo) {
+      return NextResponse.json(
+        { error: 'accountId, owner, and repo are required' },
+        { status: 400 },
+      );
+    }
+
+    const body = await req.json().catch(() => ({}));
+    if (typeof body.private !== 'boolean') {
+      return NextResponse.json(
+        { error: 'private must be a boolean' },
+        { status: 400 },
+      );
+    }
+
+    const account = await db.account.findFirst({ where: { id: accountId, userId: user.id } });
+    if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 });
+
+    const updatedRepo = await updateRepoVisibility(account.token, owner, repo, body.private);
+    return NextResponse.json(updatedRepo);
+  } catch (err: unknown) {
+    if (err instanceof AuthError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
+    const message = err instanceof Error ? err.message : 'Failed to update repository visibility';
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

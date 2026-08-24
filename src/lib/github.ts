@@ -128,6 +128,22 @@ export async function deleteRepo(token: string | undefined, owner: string, repo:
   }
 }
 
+export async function updateRepoVisibility(
+  token: string | undefined,
+  owner: string,
+  repo: string,
+  isPrivate: boolean,
+) {
+  return ghFetch<import('@/types').GitHubRepo>(
+    `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
+    token,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ private: isPrivate }),
+    },
+  );
+}
+
 // -------- Contents --------
 export async function getContents(token: string | undefined, owner: string, repo: string, path: string, ref?: string) {
   let url: string;

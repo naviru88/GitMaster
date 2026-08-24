@@ -56,6 +56,16 @@ async function put<T>(url: string, body?: unknown) {
   );
 }
 
+async function patch<T>(url: string, body?: unknown) {
+  return handleResponse<T>(
+    await fetch(`${BASE}${url}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined,
+    }),
+  );
+}
+
 async function del<T>(url: string) {
   return handleResponse<T>(await fetch(`${BASE}${url}`, { method: 'DELETE' }));
 }
@@ -89,6 +99,10 @@ export const github = {
     delete: (accountId: string, owner: string, repo: string) => {
       const params = new URLSearchParams({ accountId, owner, repo });
       return del<{ success: boolean }>(`/github/repos?${params.toString()}`);
+    },
+    updateVisibility: (accountId: string, owner: string, repo: string, isPrivate: boolean) => {
+      const params = new URLSearchParams({ accountId, owner, repo });
+      return patch<GitHubRepo>(`/github/repos?${params.toString()}`, { private: isPrivate });
     },
   },
 
