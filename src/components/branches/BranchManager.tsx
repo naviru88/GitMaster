@@ -119,12 +119,19 @@ export default function BranchManager() {
       );
       if (result.merged) {
         toast.success(`Merged ${mergeSource} into ${mergeTarget}`);
+        setMergeSource('');
+        setMergeTarget('');
+        fetchBranches();
       } else {
-        toast.error(result.message || 'Merge failed.');
+        // GitHub can return a normal JSON response with merged:false instead
+        // of throwing a 409. Keep both selections intact so the resolver can
+        // use them, rather than clearing the state before it is rendered.
+        toast.error(`${mergeSource} and ${mergeTarget} could not be merged`, {
+          description: result.message || 'Opening the conflict resolver…',
+          duration: 4000,
+        });
+        setConflictDialogOpen(true);
       }
-      setMergeSource('');
-      setMergeTarget('');
-      fetchBranches();
     } catch (err) {
       const raw = err instanceof Error ? err.message : '';
       // A 409 here means GitHub found overlapping changes it can't combine

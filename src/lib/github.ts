@@ -224,7 +224,7 @@ export async function createBranch(token: string | undefined, owner: string, rep
 
 export async function getBranchSha(token: string | undefined, owner: string, repo: string, branch: string) {
   return ghFetch<{ object: { sha: string } }>(
-    `${GITHUB_API}/repos/${owner}/${repo}/git/ref/heads/${branch}`,
+    `${GITHUB_API}/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(branch)}`,
     token,
   );
 }
@@ -259,7 +259,7 @@ async function compareBranches(
   return ghFetch<{
     merge_base_commit: { sha: string };
     files?: Array<{ filename: string; status: string; previous_filename?: string }>;
-  }>(`${GITHUB_API}/repos/${owner}/${repo}/compare/${base}...${head}`, token);
+  }>(`${GITHUB_API}/repos/${owner}/${repo}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`, token);
 }
 
 /** Above this size, don't fetch/display content inline — same rationale as
@@ -295,7 +295,10 @@ async function getFileVersion(
     // conflict path, but guard against it rather than crash.
     return { content: null, isBinary: false, tooLarge: false };
   }
-  if (file.size > CONFLICT_CONTENT_MAX_BYTES || !file.content) {
+  // Empty files are valid text files and can still be part of a conflict.
+  // Only treat missing content as unavailable (GitHub omits it for some
+  // responses), rather than using a falsy check that misclassifies "".
+  if (file.size > CONFLICT_CONTENT_MAX_BYTES || file.content === undefined) {
     return { content: null, isBinary: false, tooLarge: true };
   }
 
