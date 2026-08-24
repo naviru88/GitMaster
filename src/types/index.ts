@@ -100,6 +100,60 @@ export interface GitHubMergeResult {
   message: string;
 }
 
+// ---------- Merge conflict resolution ----------
+/** Why a given path is flagged as a real conflict (both sides changed it
+ * differently), as opposed to a change that only happened on one side
+ * (which the merge auto-applies without asking). */
+export type ConflictKind =
+  | 'both-modified'      // both branches changed the file, to different content
+  | 'modified-deleted'   // base modified it, head deleted it
+  | 'deleted-modified'   // base deleted it, head modified it
+  | 'both-added';        // both branches added the same path independently, with different content
+
+export interface MergeConflictFile {
+  path: string;
+  kind: ConflictKind;
+  /** Content at the common-ancestor commit. null if the file didn't exist there
+   * (e.g. both branches added it independently). */
+  ancestorContent: string | null;
+  /** Content on the base (target) branch. null if base deleted the file. */
+  baseContent: string | null;
+  /** Content on the head (source) branch. null if head deleted the file. */
+  headContent: string | null;
+  /** True if any of the three versions above look like binary content — the
+   * app can't offer a meaningful text diff/merge box for these, so they're
+   * shown with guidance to resolve via a Pull Request or local git instead. */
+  isBinary: boolean;
+  /** True if a version is too large to safely fetch/display inline. Same
+   * fallback as isBinary. */
+  tooLarge: boolean;
+}
+
+export interface MergeConflictCheckResult {
+  hasConflicts: boolean;
+  mergeBaseSha: string;
+  baseSha: string;
+  headSha: string;
+  /** Paths changed only on head — these get auto-applied to the merge with
+   * no user input needed. */
+  autoApplyPaths: string[];
+  conflicts: MergeConflictFile[];
+}
+
+export interface MergeResolution {
+  path: string;
+  /** The resolved text content to commit for this path, or null to resolve
+   * the conflict by deleting the file entirely (e.g. keeping one side's
+   * deletion over the other side's edit). */
+  content: string | null;
+}
+
+export interface MergeConflictResolveResult {
+  sha: string;
+  filesResolved: number;
+  filesAutoApplied: number;
+}
+
 export interface GitHubCreateRepoResult {
   id: number;
   name: string;

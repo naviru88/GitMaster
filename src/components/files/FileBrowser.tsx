@@ -11,6 +11,8 @@ import {
   Plus,
   FolderUp,
   Download,
+  Trash2,
+  Loader2,
 } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 import { github } from '@/services/api';
@@ -41,6 +43,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type { GitHubContent } from '@/types';
@@ -80,6 +92,9 @@ export default function FileBrowser() {
   const [newFileName, setNewFileName] = useState('');
   const [pushOpen, setPushOpen] = useState(false);
   const [pullOpen, setPullOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<GitHubContent | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteProgress, setDeleteProgress] = useState<{ done: number; total: number } | null>(null);
 
   const fetchContents = useCallback(async (path: string) => {
     if (!selectedAccountId || !selectedRepo) return;
@@ -145,6 +160,40 @@ export default function FileBrowser() {
     });
     setNewFileName('');
     setNewFileOpen(false);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteTarget || !selectedAccountId || !selectedRepo) return;
+    setDeleting(true);
+    setDeleteProgress(null);
+    const owner = selectedRepo.owner.login;
+    const repo = selectedRepo.name;
+    const branch = selectedBranch || undefined;
+    try {
+      if (deleteTarget.type === 'dir') {
+        const result = await github.contents.deleteFolder(
+          selectedAccountId, owner, repo, deleteTarget.path,
+          `Delete ${deleteTarget.path}`, branch,
+          (done, total) => setDeleteProgress({ done, total }),
+        );
+        toast.success(`Deleted ${deleteTarget.path}`, {
+          description: `Removed ${result.deletedCount} file(s).`,
+        });
+      } else {
+        await github.contents.deleteFile(
+          selectedAccountId, owner, repo, deleteTarget.path,
+          `Delete ${deleteTarget.path}`, deleteTarget.sha, branch,
+        );
+        toast.success(`Deleted ${deleteTarget.path}`);
+      }
+      setDeleteTarget(null);
+      fetchContents(filePath);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete.');
+    } finally {
+      setDeleting(false);
+      setDeleteProgress(null);
+    }
   };
 
   const pathSegments = filePath ? filePath.split('/') : [];
@@ -230,13 +279,14 @@ export default function FileBrowser() {
               <TableHead className="w-10" />
               <TableHead>Name</TableHead>
               <TableHead className="w-24 text-right">Size</TableHead>
+              <TableHead className="w-10" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {sortedContents.map((item) => (
               <TableRow
                 key={item.sha}
-                className="cursor-pointer"
+                className="cursor-pointer group"
                 onClick={() =>
                   item.type === 'dir' ? handleDirClick(item) : handleFileClick(item)
                 }
@@ -252,6 +302,18 @@ export default function FileBrowser() {
                 <TableCell className="text-right text-muted-foreground text-sm">
                   {item.type === 'file' ? formatSize(item.size) : '—'}
                 </TableCell>
+                <TableCell className="w-10">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeleteTarget(item);
+                    }}
+                    className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
+                    title={item.type === 'dir' ? 'Delete folder' : 'Delete file'}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </button>
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -265,6 +327,50 @@ export default function FileBrowser() {
         onSuccess={() => fetchContents(filePath)}
       />
       <PullDialog open={pullOpen} onOpenChange={setPullOpen} />
+
+      {/* Delete confirmation */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && !deleting && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Delete {deleteTarget?.type === 'dir' ? 'folder' : 'file'}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget?.type === 'dir' ? (
+                <>
+                  This will permanently delete <span className="font-mono">{deleteTarget?.path}</span> and every
+                  file inside it from <span className="font-mono">{selectedBranch}</span>, one commit per file.
+                  This action cannot be undone.
+                </>
+              ) : (
+                <>
+                  This will permanently delete <span className="font-mono">{deleteTarget?.path}</span> from{' '}
+                  <span className="font-mono">{selectedBranch}</span>. This action cannot be undone.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {deleting && deleteProgress && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="size-3.5 animate-spin" />
+              Deleting {deleteProgress.done}/{deleteProgress.total} file(s)…
+            </div>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                handleDeleteConfirm();
+              }}
+              disabled={deleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleting ? <Loader2 className="size-3.5 animate-spin" /> : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* New file dialog */}
       <Dialog open={newFileOpen} onOpenChange={setNewFileOpen}>

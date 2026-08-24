@@ -35,6 +35,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }
     const message = err instanceof Error ? err.message : 'Failed to merge branches';
-    return NextResponse.json({ error: message }, { status: 500 });
+    // Preserve GitHub's real status code (e.g. 409 for a genuine merge
+    // conflict) instead of collapsing every failure to 500 — our own
+    // errors are formatted as "GitHub API <status>: ...", so pull it out.
+    const statusMatch = message.match(/^GitHub API (\d{3}):/);
+    const status = statusMatch ? parseInt(statusMatch[1], 10) : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }
