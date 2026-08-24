@@ -14,6 +14,7 @@ import CommitList from '@/components/commits/CommitList';
 import DeleteRepoDialog from './DeleteRepoDialog';
 import ChangeVisibilityDialog from './ChangeVisibilityDialog';
 import EditRepoDescriptionDialog from './EditRepoDescriptionDialog';
+import EditRepoNameDialog from './EditRepoNameDialog';
 import type { RepoTab } from '@/types';
 
 export default function RepoDetailView() {
@@ -31,6 +32,7 @@ export default function RepoDetailView() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [visibilityOpen, setVisibilityOpen] = useState(false);
   const [descriptionOpen, setDescriptionOpen] = useState(false);
+  const [nameOpen, setNameOpen] = useState(false);
 
   const fetchBranches = useCallback(async () => {
     if (!selectedAccountId || !selectedRepo) return;
@@ -100,7 +102,13 @@ export default function RepoDetailView() {
         <div className="flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-4">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-xl font-bold tracking-tight">{selectedRepo.full_name}</h1>
+              <div className="flex items-center gap-1 min-w-0">
+                <h1 className="text-xl font-bold tracking-tight truncate">{selectedRepo.full_name}</h1>
+                <Button variant="ghost" size="icon" className="size-7 shrink-0" onClick={() => setNameOpen(true)} title="Rename repository">
+                  <Pencil className="size-3.5" />
+                  <span className="sr-only">Rename repository</span>
+                </Button>
+              </div>
               {selectedRepo.private && (
                 <Badge variant="secondary" className="gap-1 text-xs">
                   <ShieldCheck className="size-3" />
@@ -190,6 +198,13 @@ export default function RepoDetailView() {
       <EditRepoDescriptionDialog
         open={descriptionOpen}
         onOpenChange={setDescriptionOpen}
+        accountId={selectedAccountId}
+        repository={selectedRepo}
+        onUpdated={handleRepoUpdated}
+      />
+      <EditRepoNameDialog
+        open={nameOpen}
+        onOpenChange={setNameOpen}
         accountId={selectedAccountId}
         repository={selectedRepo}
         onUpdated={handleRepoUpdated}

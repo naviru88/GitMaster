@@ -108,6 +108,10 @@ export const github = {
       const params = new URLSearchParams({ accountId, owner, repo });
       return patch<GitHubRepo>(`/github/repos?${params.toString()}`, { description });
     },
+    updateName: (accountId: string, owner: string, repo: string, name: string) => {
+      const params = new URLSearchParams({ accountId, owner, repo });
+      return patch<GitHubRepo>(`/github/repos?${params.toString()}`, { name });
+    },
   },
 
   contents: {

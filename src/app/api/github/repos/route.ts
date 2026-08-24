@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { listRepos, searchRepos, createRepo, deleteRepo, updateRepoVisibility, updateRepoDescription } from '@/lib/github';
+import { listRepos, searchRepos, createRepo, deleteRepo, updateRepoVisibility, updateRepoDescription, updateRepoName } from '@/lib/github';
 import { requireAuth, AuthError } from '@/lib/auth';
 
 export async function GET(req: NextRequest) {
@@ -78,11 +78,19 @@ export async function PATCH(req: NextRequest) {
     }
 
     const body = await req.json().catch(() => ({}));
-    if (typeof body.private !== 'boolean' && typeof body.description !== 'string') {
+    if (
+      typeof body.private !== 'boolean'
+      && typeof body.description !== 'string'
+      && typeof body.name !== 'string'
+    ) {
       return NextResponse.json(
-        { error: 'private must be a boolean or description must be a string' },
+        { error: 'private must be a boolean, description must be a string, or name must be a string' },
         { status: 400 },
       );
+    }
+
+    if (typeof body.name === 'string' && !body.name.trim()) {
+      return NextResponse.json({ error: 'name cannot be empty' }, { status: 400 });
     }
 
     const account = await db.account.findFirst({ where: { id: accountId, userId: user.id } });
@@ -90,7 +98,9 @@ export async function PATCH(req: NextRequest) {
 
     const updatedRepo = typeof body.private === 'boolean'
       ? await updateRepoVisibility(account.token, owner, repo, body.private)
-      : await updateRepoDescription(account.token, owner, repo, body.description.trim());
+      : typeof body.description === 'string'
+        ? await updateRepoDescription(account.token, owner, repo, body.description.trim())
+        : await updateRepoName(account.token, owner, repo, body.name.trim());
     return NextResponse.json(updatedRepo);
   } catch (err: unknown) {
     if (err instanceof AuthError) {
