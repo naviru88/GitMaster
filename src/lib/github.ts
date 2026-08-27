@@ -95,9 +95,17 @@ export async function getPublicUser(username: string) {
 }
 
 // -------- Repositories --------
+
+/**
+ * List repos for the current account. Uses `affiliation` rather than
+ * `type=owner` so this includes repos you have collaborator/push access to
+ * but didn't create yourself — e.g. someone else's repo that added you as a
+ * collaborator. `type=owner` (the previous behavior) silently excluded
+ * those entirely.
+ */
 export async function listRepos(token: string | undefined, username: string, page = 1, perPage = 30) {
   const url = username === '*'
-    ? `${GITHUB_API}/user/repos?sort=updated&per_page=${perPage}&page=${page}&type=owner`
+    ? `${GITHUB_API}/user/repos?sort=updated&per_page=${perPage}&page=${page}&affiliation=owner,collaborator,organization_member`
     : `${GITHUB_API}/users/${username}/repos?sort=updated&per_page=${perPage}&page=${page}`;
   return ghFetch<import('@/types').GitHubRepo[]>(url, token);
 }
@@ -105,6 +113,42 @@ export async function listRepos(token: string | undefined, username: string, pag
 export async function searchRepos(token: string | undefined, query: string, page = 1, perPage = 30) {
   const url = `${GITHUB_API}/search/repositories?q=${encodeURIComponent(query)}&per_page=${perPage}&page=${page}`;
   return ghFetch<{ total_count: number; items: import('@/types').GitHubRepo[] }>(url, token);
+}
+
+/**
+ * Search repos the account can actually access (owner + collaborator + org
+ * member), by name. GitHub's `/search/repositories` `user:` qualifier only
+ * matches repos you OWN, so it can never find a repo someone else created
+ * and merely gave you push access to — this pulls from the same
+ * affiliation-aware listing as listRepos() above and filters by name
+ * ourselves instead, so search and browse behave consistently.
+ *
+ * Scans up to 500 accessible repos upstream (5 pages of 100) before
+ * filtering; more than that and this endpoint won't be exhaustive — fine
+ * for the personal/small-team scale this app targets, but a known limit.
+ */
+export async function searchAccessibleRepos(
+  token: string,
+  query: string,
+  page = 1,
+  perPage = 30,
+): Promise<{ items: import('@/types').GitHubRepo[]; totalCount: number }> {
+  const MAX_UPSTREAM_PAGES = 5;
+  const q = query.trim().toLowerCase();
+  let all: import('@/types').GitHubRepo[] = [];
+  for (let p = 1; p <= MAX_UPSTREAM_PAGES; p++) {
+    const batch = await ghFetch<import('@/types').GitHubRepo[]>(
+      `${GITHUB_API}/user/repos?sort=updated&per_page=100&page=${p}&affiliation=owner,collaborator,organization_member`,
+      token,
+    );
+    all = all.concat(batch);
+    if (batch.length < 100) break; // upstream ran out of pages
+  }
+  const matched = q
+    ? all.filter((r) => r.name.toLowerCase().includes(q) || r.full_name.toLowerCase().includes(q))
+    : all;
+  const start = (page - 1) * perPage;
+  return { items: matched.slice(start, start + perPage), totalCount: matched.length };
 }
 
 export async function createRepo(

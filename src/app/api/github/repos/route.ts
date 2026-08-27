@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { listRepos, searchRepos, createRepo, deleteRepo, updateRepoVisibility, updateRepoDescription, updateRepoName } from '@/lib/github';
+import { listRepos, searchAccessibleRepos, createRepo, deleteRepo, updateRepoVisibility, updateRepoDescription, updateRepoName } from '@/lib/github';
 import { requireAuth, AuthError } from '@/lib/auth';
 
 export async function GET(req: NextRequest) {
@@ -20,8 +20,8 @@ export async function GET(req: NextRequest) {
     const token = account.token;
 
     if (q) {
-      const result = await searchRepos(token, q + ' user:' + account.username, page);
-      return NextResponse.json({ items: result.items, totalCount: result.total_count });
+      const result = await searchAccessibleRepos(token, q, page);
+      return NextResponse.json({ items: result.items, totalCount: result.totalCount });
     }
 
     const repos = await listRepos(token, '*', page);
