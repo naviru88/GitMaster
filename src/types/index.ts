@@ -48,6 +48,13 @@ export interface GitHubRepo {
     login: string;
     avatar_url: string;
   };
+  permissions?: {
+    admin?: boolean;
+    push?: boolean;
+    pull?: boolean;
+    maintain?: boolean;
+    triage?: boolean;
+  };
 }
 
 export interface GitHubBranch {

@@ -174,6 +174,12 @@ export const github = {
       get<GitHubBranch[]>(`/github/branches?accountId=${accountId}&owner=${owner}&repo=${repo}`),
     create: (accountId: string, owner: string, repo: string, branch: string, fromSha: string) =>
       post<void>(`/github/branches?accountId=${accountId}`, { owner, repo, branch, fromSha }),
+    delete: (accountId: string, owner: string, repo: string, branch: string) => {
+      const params = new URLSearchParams({ accountId, owner, repo, branch });
+      return del<{ success: boolean }>(`/github/branches?${params.toString()}`);
+    },
+    rename: (accountId: string, owner: string, repo: string, oldName: string, newName: string) =>
+      patch<{ success: boolean }>(`/github/branches?accountId=${accountId}`, { owner, repo, oldName, newName }),
   },
 
   commits: {

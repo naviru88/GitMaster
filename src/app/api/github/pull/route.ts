@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getArchiveUrl } from '@/lib/github';
 import { requireAuth, AuthError } from '@/lib/auth';
+import { decrypt } from '@/lib/crypto';
+import { githubError } from '@/lib/errors';
 
 export async function GET(req: NextRequest) {
   try {
@@ -20,15 +22,13 @@ export async function GET(req: NextRequest) {
     const account = await db.account.findFirst({ where: { id: accountId, userId: user.id } });
     if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 });
 
+    const token = decrypt(account.token);
+
     // Build the archive URL and proxy the download
     const archiveUrl = getArchiveUrl(owner, repo, ref, format);
     const ghRes = await fetch(archiveUrl, {
       headers: {
-        Authorization: `Bearer ${account.token}`,
-        // GitHub's archive endpoints return the binary after a redirect, but
-        // the API endpoint itself now rejects octet-stream as an Accept type.
-        // Ask for the JSON API representation and let fetch follow the
-        // redirect to the archive host.
+        Authorization: `Bearer ${token}`,
         Accept: 'application/json',
       },
       redirect: 'follow',
@@ -36,7 +36,8 @@ export async function GET(req: NextRequest) {
 
     if (!ghRes.ok) {
       const text = await ghRes.text();
-      return NextResponse.json({ error: `GitHub API ${ghRes.status}: ${text.slice(0, 200)}` }, { status: ghRes.status });
+      const { message, status } = githubError(new Error(`GitHub API ${ghRes.status}: ${text.slice(0, 200)}`));
+      return NextResponse.json({ error: message }, { status });
     }
 
     const filename = `${repo}-${ref}.${format === 'zipball' ? 'zip' : 'tar.gz'}`;
@@ -53,7 +54,7 @@ export async function GET(req: NextRequest) {
     if (err instanceof AuthError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }
-    const message = err instanceof Error ? err.message : 'Failed to download archive';
-    return NextResponse.json({ error: message }, { status: 500 });
+    const { message, status } = githubError(err);
+    return NextResponse.json({ error: message }, { status });
   }
 }

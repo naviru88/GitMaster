@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { getContents, getFile } from '@/lib/github';
 import { githubError } from '@/lib/errors';
 import { requireAuth, AuthError } from '@/lib/auth';
+import { decrypt } from '@/lib/crypto';
 import { gzipSync } from 'node:zlib';
 
 type ArchiveEntry = { path: string; content: Buffer };
@@ -53,7 +54,7 @@ export async function GET(req: NextRequest) {
     }
     const account = await db.account.findFirst({ where: { id: accountId, userId: user.id } });
     if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 });
-    const token = account.token ?? undefined;
+    const token = account.token ? decrypt(account.token) : undefined;
 
     const item = await getFile(token, owner, repo, path, ref).catch(() => null);
     let entries: ArchiveEntry[] = [];

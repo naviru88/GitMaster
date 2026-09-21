@@ -2,13 +2,12 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Plus, GitMerge, Trash2, Check, Loader2, Shield } from 'lucide-react';
+import { Plus, GitMerge, Trash2, Check, Loader2, Shield, Edit2, X, AlertTriangle, Users } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 import { github } from '@/services/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Skeleton } from '@/components/ui/skeleton';
 import { Separator } from '@/components/ui/separator';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import MergeConflictDialog from './MergeConflictDialog';
@@ -27,6 +26,14 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 export default function BranchManager() {
   const selectedAccountId = useAppStore((s) => s.selectedAccountId);
@@ -42,8 +49,20 @@ export default function BranchManager() {
   const [mergeSource, setMergeSource] = useState('');
   const [mergeTarget, setMergeTarget] = useState('');
   const [merging, setMerging] = useState(false);
-  const [deleting, setDeleting] = useState<string | null>(null);
   const [conflictDialogOpen, setConflictDialogOpen] = useState(false);
+
+  // Branch Deletion states
+  const [deletingBranch, setDeletingBranch] = useState<string | null>(null);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  // Branch Renaming states
+  const [editingBranch, setEditingBranch] = useState<string | null>(null);
+  const [newBranchEditName, setNewBranchEditName] = useState('');
+  const [isRenaming, setIsRenaming] = useState(false);
+
+  // Collaborator / push permissions check
+  const hasPushAccess = selectedRepo?.permissions ? selectedRepo.permissions.push : true;
 
   const fetchBranches = useCallback(async () => {
     if (!selectedAccountId || !selectedRepo) return;
@@ -88,7 +107,7 @@ export default function BranchManager() {
         newBranchName.trim(),
         base.commit.sha,
       );
-      toast.success(`Branch "${newBranchName.trim()}" created!`);
+      toast.success(`Branch "${newBranchName.trim()}" created successfully!`);
       setNewBranchName('');
       fetchBranches();
     } catch (err) {
@@ -104,7 +123,7 @@ export default function BranchManager() {
       return;
     }
     if (mergeSource === mergeTarget) {
-      toast.error('Source and target cannot be the same.');
+      toast.error('Source and target branches cannot be the same.');
       return;
     }
     setMerging(true);
@@ -123,10 +142,7 @@ export default function BranchManager() {
         setMergeTarget('');
         fetchBranches();
       } else {
-        // GitHub can return a normal JSON response with merged:false instead
-        // of throwing a 409. Keep both selections intact so the resolver can
-        // use them, rather than clearing the state before it is rendered.
-        toast.error(`${mergeSource} and ${mergeTarget} could not be merged`, {
+        toast.error(`${mergeSource} and ${mergeTarget} could not be merged automatically`, {
           description: result.message || 'Opening the conflict resolver…',
           duration: 4000,
         });
@@ -134,11 +150,7 @@ export default function BranchManager() {
       }
     } catch (err) {
       const raw = err instanceof Error ? err.message : '';
-      // A 409 here means GitHub found overlapping changes it can't combine
-      // automatically — this isn't something the app can resolve on its
-      // own, it needs a human to pick which changes win. Give a clear,
-      // actionable message instead of surfacing GitHub's raw JSON error.
-      if (/^GitHub API 409:/.test(raw) || /merge conflict/i.test(raw)) {
+      if (/409/i.test(raw) || /conflict/i.test(raw)) {
         toast.error(`${mergeSource} and ${mergeTarget} have conflicting changes`, {
           description: 'Opening the conflict resolver…',
           duration: 4000,
@@ -152,17 +164,71 @@ export default function BranchManager() {
     }
   };
 
-  const handleDelete = async (name: string) => {
-    if (!selectedAccountId || !selectedRepo) return;
-    setDeleting(name);
+  const confirmDelete = (name: string) => {
+    setDeletingBranch(name);
+    setDeleteConfirmOpen(true);
+  };
+
+  const handleExecuteDelete = async () => {
+    if (!selectedAccountId || !selectedRepo || !deletingBranch) return;
+    setIsDeleting(true);
     try {
-      // GitHub API for deleting a branch uses the repo delete endpoint with specific handling
-      // For now we show a message since branch deletion requires a specific API
-      toast.error('Branch deletion via API is not supported. Please delete from GitHub directly.');
+      await github.branches.delete(
+        selectedAccountId,
+        selectedRepo.owner.login,
+        selectedRepo.name,
+        deletingBranch,
+      );
+      toast.success(`Branch "${deletingBranch}" deleted successfully.`);
+      if (selectedBranch === deletingBranch) {
+        setSelectedBranch(defaultBranch || (branches.find((b) => b.name !== deletingBranch)?.name ?? ''));
+      }
+      setDeleteConfirmOpen(false);
+      setDeletingBranch(null);
+      fetchBranches();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to delete branch.');
     } finally {
-      setDeleting(null);
+      setIsDeleting(false);
+    }
+  };
+
+  const startRename = (name: string) => {
+    setEditingBranch(name);
+    setNewBranchEditName(name);
+  };
+
+  const cancelRename = () => {
+    setEditingBranch(null);
+    setNewBranchEditName('');
+  };
+
+  const handleExecuteRename = async (oldName: string) => {
+    const trimmed = newBranchEditName.trim();
+    if (!trimmed || trimmed === oldName) {
+      cancelRename();
+      return;
+    }
+    if (!selectedAccountId || !selectedRepo) return;
+    setIsRenaming(true);
+    try {
+      await github.branches.rename(
+        selectedAccountId,
+        selectedRepo.owner.login,
+        selectedRepo.name,
+        oldName,
+        trimmed,
+      );
+      toast.success(`Branch "${oldName}" renamed to "${trimmed}".`);
+      if (selectedBranch === oldName) {
+        setSelectedBranch(trimmed);
+      }
+      cancelRename();
+      fetchBranches();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to rename branch.');
+    } finally {
+      setIsRenaming(false);
     }
   };
 
@@ -170,6 +236,28 @@ export default function BranchManager() {
 
   return (
     <div className="flex flex-col space-y-6">
+      {/* Team / Collaborator Access Notice */}
+      {selectedRepo && (
+        <div className="flex flex-wrap items-center justify-between gap-2 p-3 bg-muted/40 rounded-lg border text-sm">
+          <div className="flex items-center gap-2">
+            <Users className="size-4 text-muted-foreground" />
+            <span className="text-muted-foreground">Access level:</span>
+            {hasPushAccess ? (
+              <Badge variant="outline" className="text-xs bg-emerald-500/10 text-emerald-600 border-emerald-500/30">
+                Push &amp; Write Access (Owner / Collaborator)
+              </Badge>
+            ) : (
+              <Badge variant="outline" className="text-xs bg-amber-500/10 text-amber-600 border-amber-500/30">
+                Read-Only (Push Restricted)
+              </Badge>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Any team member added as a repository collaborator on GitHub can manage branches and push changes.
+          </p>
+        </div>
+      )}
+
       {/* Create branch */}
       <Card className="order-2">
         <CardHeader className="pb-3">
@@ -182,9 +270,10 @@ export default function BranchManager() {
               value={newBranchName}
               onChange={(e) => setNewBranchName(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleCreateBranch()}
+              disabled={!hasPushAccess}
               className="flex-1"
             />
-            <Select value={baseBranch} onValueChange={setBaseBranch}>
+            <Select value={baseBranch} onValueChange={setBaseBranch} disabled={!hasPushAccess}>
               <SelectTrigger className="w-full sm:w-48">
                 <SelectValue placeholder="Base branch" />
               </SelectTrigger>
@@ -196,7 +285,11 @@ export default function BranchManager() {
                 ))}
               </SelectContent>
             </Select>
-            <Button onClick={handleCreateBranch} disabled={creating || !newBranchName.trim()} className="gap-1.5 shrink-0">
+            <Button
+              onClick={handleCreateBranch}
+              disabled={creating || !newBranchName.trim() || !hasPushAccess}
+              className="gap-1.5 shrink-0"
+            >
               {creating ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
               Create
             </Button>
@@ -211,7 +304,7 @@ export default function BranchManager() {
         </CardHeader>
         <CardContent>
           <div className="flex flex-col sm:flex-row gap-2">
-            <Select value={mergeSource} onValueChange={setMergeSource}>
+            <Select value={mergeSource} onValueChange={setMergeSource} disabled={!hasPushAccess}>
               <SelectTrigger className="w-full sm:w-48">
                 <SelectValue placeholder="Source branch" />
               </SelectTrigger>
@@ -224,7 +317,7 @@ export default function BranchManager() {
               </SelectContent>
             </Select>
             <span className="self-center text-sm text-muted-foreground hidden sm:block">into</span>
-            <Select value={mergeTarget} onValueChange={setMergeTarget}>
+            <Select value={mergeTarget} onValueChange={setMergeTarget} disabled={!hasPushAccess}>
               <SelectTrigger className="w-full sm:w-48">
                 <SelectValue placeholder="Target branch" />
               </SelectTrigger>
@@ -236,7 +329,11 @@ export default function BranchManager() {
                 ))}
               </SelectContent>
             </Select>
-            <Button onClick={handleMerge} disabled={merging || !mergeSource || !mergeTarget} className="gap-1.5 shrink-0">
+            <Button
+              onClick={handleMerge}
+              disabled={merging || !mergeSource || !mergeTarget || !hasPushAccess}
+              className="gap-1.5 shrink-0"
+            >
               {merging ? <Loader2 className="size-4 animate-spin" /> : <GitMerge className="size-4" />}
               Merge
             </Button>
@@ -248,7 +345,10 @@ export default function BranchManager() {
 
       {/* Branches table */}
       <div className="order-1">
-        <h3 className="text-base font-semibold mb-3">All Branches</h3>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-base font-semibold">All Branches</h3>
+          <span className="text-xs text-muted-foreground">{branches.length} branch(es)</span>
+        </div>
         {branches.length === 0 ? (
           <p className="text-sm text-muted-foreground">No branches found.</p>
         ) : (
@@ -265,18 +365,52 @@ export default function BranchManager() {
               {branches.map((branch) => (
                 <TableRow key={branch.name}>
                   <TableCell>
-                    <div className="flex items-center gap-2">
-                      <code className="text-sm font-mono">{branch.name}</code>
-                      {branch.name === selectedBranch && (
-                        <Badge variant="secondary" className="text-xs gap-1">
-                          <Check className="size-3" />
-                          Active
-                        </Badge>
-                      )}
-                      {branch.name === defaultBranch && (
-                        <Badge variant="outline" className="text-xs">Default</Badge>
-                      )}
-                    </div>
+                    {editingBranch === branch.name ? (
+                      <div className="flex items-center gap-2">
+                        <Input
+                          value={newBranchEditName}
+                          onChange={(e) => setNewBranchEditName(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleExecuteRename(branch.name);
+                            if (e.key === 'Escape') cancelRename();
+                          }}
+                          className="h-8 text-xs font-mono max-w-[200px]"
+                          autoFocus
+                          disabled={isRenaming}
+                        />
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="size-7 text-emerald-600 hover:text-emerald-700"
+                          onClick={() => handleExecuteRename(branch.name)}
+                          disabled={isRenaming || !newBranchEditName.trim()}
+                        >
+                          {isRenaming ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="size-7 text-muted-foreground hover:text-foreground"
+                          onClick={cancelRename}
+                          disabled={isRenaming}
+                        >
+                          <X className="size-3.5" />
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <code className="text-sm font-mono">{branch.name}</code>
+                        {branch.name === selectedBranch && (
+                          <Badge variant="secondary" className="text-xs gap-1">
+                            <Check className="size-3" />
+                            Active
+                          </Badge>
+                        )}
+                        {branch.name === defaultBranch && (
+                          <Badge variant="outline" className="text-xs">Default</Badge>
+                        )}
+                      </div>
+                    )}
                   </TableCell>
                   <TableCell>
                     <code className="text-xs text-muted-foreground font-mono">{branch.commit.sha.slice(0, 7)}</code>
@@ -302,15 +436,28 @@ export default function BranchManager() {
                           Set Active
                         </Button>
                       )}
-                      {branch.name !== defaultBranch && branch.name !== selectedBranch && (
+                      {/* Rename Branch Button */}
+                      {hasPushAccess && editingBranch !== branch.name && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-8 text-muted-foreground hover:text-foreground"
+                          title="Rename branch"
+                          onClick={() => startRename(branch.name)}
+                        >
+                          <Edit2 className="size-3.5" />
+                        </Button>
+                      )}
+                      {/* Delete Branch Button */}
+                      {hasPushAccess && branch.name !== defaultBranch && branch.name !== selectedBranch && (
                         <Button
                           variant="ghost"
                           size="icon"
                           className="size-8 text-muted-foreground hover:text-destructive"
-                          onClick={() => handleDelete(branch.name)}
-                          disabled={deleting === branch.name}
+                          title="Delete branch"
+                          onClick={() => confirmDelete(branch.name)}
                         >
-                          {deleting === branch.name ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
+                          <Trash2 className="size-3.5" />
                         </Button>
                       )}
                     </div>
@@ -321,6 +468,43 @@ export default function BranchManager() {
           </Table>
         )}
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="size-5 text-destructive" />
+              Delete Branch
+            </DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete branch{' '}
+              <code className="px-1.5 py-0.5 rounded bg-muted font-mono font-bold text-foreground">
+                {deletingBranch}
+              </code>
+              ? This action will permanently remove the branch from GitHub and cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              onClick={() => setDeleteConfirmOpen(false)}
+              disabled={isDeleting}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleExecuteDelete}
+              disabled={isDeleting}
+              className="gap-1.5"
+            >
+              {isDeleting ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+              Delete Branch
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {selectedAccountId && selectedRepo && mergeSource && mergeTarget && (
         <MergeConflictDialog

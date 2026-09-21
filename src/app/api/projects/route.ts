@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { mergeBranches } from '@/lib/github';
 import { requireAuth, AuthError } from '@/lib/auth';
+import { decrypt } from '@/lib/crypto';
+import { githubError } from '@/lib/errors';
 
 export async function POST(req: NextRequest) {
   try {
@@ -28,18 +30,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'owner, repo, base, and head are required' }, { status: 400 });
     }
 
-    const result = await mergeBranches(account.token, owner, repo, base, head, message);
+    const token = decrypt(account.token);
+    const result = await mergeBranches(token, owner, repo, base, head, message);
     return NextResponse.json(result);
   } catch (err: unknown) {
     if (err instanceof AuthError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }
-    const message = err instanceof Error ? err.message : 'Failed to merge branches';
-    // Preserve GitHub's real status code (e.g. 409 for a genuine merge
-    // conflict) instead of collapsing every failure to 500 — our own
-    // errors are formatted as "GitHub API <status>: ...", so pull it out.
-    const statusMatch = message.match(/^GitHub API (\d{3}):/);
-    const status = statusMatch ? parseInt(statusMatch[1], 10) : 500;
+    const { message, status } = githubError(err);
     return NextResponse.json({ error: message }, { status });
   }
 }

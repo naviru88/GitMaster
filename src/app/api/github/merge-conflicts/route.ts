@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { checkMergeConflicts, resolveMergeConflicts } from '@/lib/github';
 import { requireAuth, AuthError } from '@/lib/auth';
 import { githubError } from '@/lib/errors';
+import { decrypt } from '@/lib/crypto';
 
 // Fetching three file versions (ancestor/base/head) per conflicting path
 export const maxDuration = 60;
@@ -26,7 +27,8 @@ export async function GET(req: NextRequest) {
     const account = await db.account.findFirst({ where: { id: accountId, userId: user.id } });
     if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 });
 
-    const result = await checkMergeConflicts(account.token, owner, repo, base, head);
+    const token = decrypt(account.token);
+    const result = await checkMergeConflicts(token, owner, repo, base, head);
     return NextResponse.json(result);
   } catch (err: unknown) {
     if (err instanceof AuthError) {
@@ -69,8 +71,10 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const token = decrypt(account.token);
+
     // Re-detect conflicts server-side rather than trusting the client's
-    const check = await checkMergeConflicts(account.token, owner, repo, base, head);
+    const check = await checkMergeConflicts(token, owner, repo, base, head);
     const resolvedPaths = new Set(resolutions.map((r) => r.path));
     const unresolved = check.conflicts.filter((c) => !resolvedPaths.has(c.path));
     if (unresolved.length > 0) {
@@ -86,7 +90,7 @@ export async function POST(req: NextRequest) {
     }
 
     const result = await resolveMergeConflicts(
-      account.token,
+      token,
       owner,
       repo,
       base,

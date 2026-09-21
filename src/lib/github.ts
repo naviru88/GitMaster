@@ -310,6 +310,39 @@ export async function getBranchSha(token: string | undefined, owner: string, rep
   );
 }
 
+export async function deleteBranch(token: string | undefined, owner: string, repo: string, branch: string) {
+  const res = await fetch(
+    `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/refs/heads/${encodeURIComponent(branch)}`,
+    {
+      method: 'DELETE',
+      headers: headers(token),
+    },
+  );
+  if (!res.ok && res.status !== 204) {
+    const body = await res.text();
+    throw new Error(`GitHub API ${res.status}: ${body}`);
+  }
+}
+
+export async function renameBranch(token: string | undefined, owner: string, repo: string, oldName: string, newName: string) {
+  try {
+    return await ghFetch<import('@/types').GitHubBranch>(
+      `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/branches/${encodeURIComponent(oldName)}/rename`,
+      token,
+      {
+        method: 'POST',
+        body: JSON.stringify({ new_name: newName }),
+      },
+    );
+  } catch (err) {
+    // If the rename endpoint fails with 404 or unsupported, fallback to create ref + delete old ref
+    const shaRes = await getBranchSha(token, owner, repo, oldName);
+    await createBranch(token, owner, repo, newName, shaRes.object.sha);
+    await deleteBranch(token, owner, repo, oldName);
+    return { name: newName, commit: { sha: shaRes.object.sha, url: '' }, protected: false };
+  }
+}
+
 // -------- Merge --------
 export async function mergeBranches(
   token: string | undefined, owner: string, repo: string, base: string, head: string,

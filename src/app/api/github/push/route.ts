@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { batchCommit } from '@/lib/github';
 import { requireAuth, AuthError } from '@/lib/auth';
 import { githubError } from '@/lib/errors';
+import { decrypt } from '@/lib/crypto';
 
 export const maxDuration = 60; // Allow up to 60s for large batch pushes
 
@@ -94,7 +95,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const result = await batchCommit(account.token, owner, repo, branch, files, message, basePath);
+    const token = decrypt(account.token);
+    const result = await batchCommit(token, owner, repo, branch, files, message, basePath);
     return NextResponse.json({
       success: true,
       sha: result.sha,

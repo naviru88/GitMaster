@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { listRepos, searchAccessibleRepos, createRepo, deleteRepo, updateRepoVisibility, updateRepoDescription, updateRepoName } from '@/lib/github';
 import { requireAuth, AuthError } from '@/lib/auth';
+import { decrypt } from '@/lib/crypto';
 
 export async function GET(req: NextRequest) {
   try {
@@ -17,7 +18,7 @@ export async function GET(req: NextRequest) {
     const account = await db.account.findFirst({ where: { id: accountId, userId: user.id } });
     if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 });
 
-    const token = account.token;
+    const token = decrypt(account.token);
 
     if (q) {
       const result = await searchAccessibleRepos(token, q, page);
@@ -52,7 +53,7 @@ export async function DELETE(req: NextRequest) {
     const account = await db.account.findFirst({ where: { id: accountId, userId: user.id } });
     if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 });
 
-    await deleteRepo(account.token, owner, repo);
+    await deleteRepo(decrypt(account.token), owner, repo);
     return NextResponse.json({ success: true });
   } catch (err: unknown) {
     if (err instanceof AuthError) {
@@ -96,11 +97,12 @@ export async function PATCH(req: NextRequest) {
     const account = await db.account.findFirst({ where: { id: accountId, userId: user.id } });
     if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 });
 
+    const token = decrypt(account.token);
     const updatedRepo = typeof body.private === 'boolean'
-      ? await updateRepoVisibility(account.token, owner, repo, body.private)
+      ? await updateRepoVisibility(token, owner, repo, body.private)
       : typeof body.description === 'string'
-        ? await updateRepoDescription(account.token, owner, repo, body.description.trim())
-        : await updateRepoName(account.token, owner, repo, body.name.trim());
+        ? await updateRepoDescription(token, owner, repo, body.description.trim())
+        : await updateRepoName(token, owner, repo, body.name.trim());
     return NextResponse.json(updatedRepo);
   } catch (err: unknown) {
     if (err instanceof AuthError) {
@@ -135,7 +137,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'name is required' }, { status: 400 });
     }
 
-    const result = await createRepo(account.token, {
+    const result = await createRepo(decrypt(account.token), {
       name,
       description,
       private: isPrivate,

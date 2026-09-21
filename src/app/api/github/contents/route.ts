@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { getContents, getFile, createOrUpdateFile, deleteFile } from '@/lib/github';
 import { githubError } from '@/lib/errors';
 import { requireAuth, AuthError } from '@/lib/auth';
+import { decrypt } from '@/lib/crypto';
 
 export async function GET(req: NextRequest) {
   try {
@@ -21,7 +22,7 @@ export async function GET(req: NextRequest) {
     const account = await db.account.findFirst({ where: { id: accountId, userId: user.id } });
     if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 });
 
-    const token = account.token ?? undefined;
+    const token = account.token ? decrypt(account.token) : undefined;
 
     const result = single
       ? await getFile(token, owner, repo, path, ref)
@@ -54,6 +55,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'A Personal Access Token is required for write operations.' }, { status: 403 });
     }
 
+    const token = decrypt(account.token);
+
     const body = await req.json();
 
     if (action === 'delete') {
@@ -70,7 +73,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'owner, repo, path, message, and sha are required' }, { status: 400 });
       }
 
-      await deleteFile(account.token, owner, repo, path, message, sha, branch);
+      await deleteFile(token, owner, repo, path, message, sha, branch);
       return NextResponse.json({ success: true });
     }
 
@@ -90,7 +93,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'owner, repo, path, content, and message are required' }, { status: 400 });
     }
 
-    const result = await createOrUpdateFile(account.token, owner, repo, path, content, message, sha, branch, isBase64);
+    const result = await createOrUpdateFile(token, owner, repo, path, content, message, sha, branch, isBase64);
     return NextResponse.json(result);
   } catch (err: unknown) {
     if (err instanceof AuthError) {

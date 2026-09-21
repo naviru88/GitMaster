@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { listCommits } from '@/lib/github';
 import { requireAuth, AuthError } from '@/lib/auth';
+import { decrypt } from '@/lib/crypto';
+import { githubError } from '@/lib/errors';
 
 export async function GET(req: NextRequest) {
   try {
@@ -20,13 +22,13 @@ export async function GET(req: NextRequest) {
     const account = await db.account.findFirst({ where: { id: accountId, userId: user.id } });
     if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 });
 
-    const commits = await listCommits(account.token, owner, repo, sha, page, 30, path);
+    const commits = await listCommits(account.token ? decrypt(account.token) : undefined, owner, repo, sha, page, 30, path);
     return NextResponse.json(commits);
   } catch (err: unknown) {
     if (err instanceof AuthError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }
-    const message = err instanceof Error ? err.message : 'Failed to fetch commits';
-    return NextResponse.json({ error: message }, { status: 500 });
+    const { message, status } = githubError(err);
+    return NextResponse.json({ error: message }, { status });
   }
 }
