@@ -16,6 +16,7 @@ import ChangeVisibilityDialog from './ChangeVisibilityDialog';
 import EditRepoDescriptionDialog from './EditRepoDescriptionDialog';
 import EditRepoNameDialog from './EditRepoNameDialog';
 import type { RepoTab } from '@/types';
+import ReleasesView from '@/components/releases/ReleasesView';
 
 export default function RepoDetailView() {
   const selectedAccountId = useAppStore((s) => s.selectedAccountId);
@@ -166,18 +167,22 @@ export default function RepoDetailView() {
       {/* Tabs */}
       <Tabs value={tabValue} onValueChange={(v) => setRepoTab(v as RepoTab)}>
         <TabsList>
-          <TabsTrigger value="files">Files</TabsTrigger>
-          <TabsTrigger value="branches">Branches</TabsTrigger>
-          <TabsTrigger value="commits">Commits</TabsTrigger>
+            <TabsTrigger value="files">Files</TabsTrigger>
+            <TabsTrigger value="branches">Branches</TabsTrigger>
+            <TabsTrigger value="commits">Commits</TabsTrigger>
+            <TabsTrigger value="releases">Releases</TabsTrigger>
         </TabsList>
         <TabsContent value="files" className="mt-4">
-          <FileBrowser />
+            <FileBrowser />
         </TabsContent>
         <TabsContent value="branches" className="mt-4">
-          <BranchManager />
+            <BranchManager />
         </TabsContent>
         <TabsContent value="commits" className="mt-4">
-          <CommitList />
+            <CommitList />
+        </TabsContent>
+        <TabsContent value="releases" className="mt-4">
+            <ReleasesView />
         </TabsContent>
       </Tabs>
       <DeleteRepoDialog

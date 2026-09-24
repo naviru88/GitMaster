@@ -1,20 +1,18 @@
-/* ============================================================
-   Auth Utilities — JWT session with httpOnly cookies
-   ============================================================ */
+//Auth Utilities — JWT session with httpOnly cookies
 
 import { SignJWT, jwtVerify } from 'jose';
 import bcrypt from 'bcryptjs';
 import { db } from '@/lib/db';
 import type { NextRequest } from 'next/server';
 
-// ---- Constants ----
+//Constants
 const JWT_SECRET = new TextEncoder().encode(
   process.env.JWT_SECRET || 'gitmaster-jwt-secret-change-in-production',
 );
 const COOKIE_NAME = 'gitmaster_session';
 const TOKEN_EXPIRY = '7d'; // 7 days
 
-// ---- Password helpers ----
+//Password helpers
 export async function hashPassword(plain: string): Promise<string> {
   return bcrypt.hash(plain, 12);
 }
@@ -23,7 +21,7 @@ export async function verifyPassword(plain: string, hashed: string): Promise<boo
   return bcrypt.compare(plain, hashed);
 }
 
-// ---- JWT helpers ----
+// JWT helpers
 export interface SessionPayload {
   userId: string;
   email: string;
@@ -49,7 +47,7 @@ export async function verifyToken(token: string): Promise<SessionPayload | null>
   }
 }
 
-// ---- Cookie helpers ----
+// Cookie helpers
 export function createSessionCookie(token: string) {
   return `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${7 * 24 * 60 * 60}`;
 }
@@ -58,7 +56,7 @@ export function deleteSessionCookie() {
   return `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
 }
 
-// ---- Get authenticated user from request ----
+// Get authenticated user from request
 export async function getAuthUser(req: NextRequest) {
   const cookie = req.cookies.get(COOKIE_NAME);
   if (!cookie?.value) return null;

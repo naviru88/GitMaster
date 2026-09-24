@@ -1,15 +1,4 @@
-/* ============================================================
-   AES-256-GCM Encryption for sensitive values (GitHub PATs)
-   ============================================================
-   Uses Node's built-in `crypto` module — no extra dependencies.
-
-   Format of ciphertext stored in DB:
-     "enc:<iv_hex>:<authTag_hex>:<ciphertext_hex>"
-
-   The "enc:" prefix lets the migration script and decrypt() distinguish
-   already-encrypted values from legacy plain-text tokens so the
-   transition is safe and idempotent.
-   ============================================================ */
+//ES-256-GCM Encryption for sensitive values (GitHub PATs)
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'crypto';
 
@@ -27,8 +16,7 @@ function getKey(): Buffer {
     return key;
   }
 
-  // Keep the app usable with the existing deployment secret while allowing a
-  // dedicated key to be added later without changing the ciphertext format.
+  // Keep the app usable with the existing deployment secret while allowing a dedicated key to be added later without changing the ciphertext format.
   const sessionSecret = process.env.SESSION_SECRET?.trim();
   if (sessionSecret) {
     return createHash('sha256').update(`gitmaster-token-encryption:${sessionSecret}`).digest();
@@ -39,10 +27,7 @@ function getKey(): Buffer {
   );
 }
 
-/**
- * Encrypt a plain-text string.
- * Returns a prefixed string safe to store in a VARCHAR/TEXT column.
- */
+//Encrypt a plain-text string.
 export function encrypt(plain: string): string {
   const key = getKey();
   const iv = randomBytes(IV_LENGTH);
@@ -54,11 +39,7 @@ export function encrypt(plain: string): string {
   return `enc:${iv.toString('hex')}:${tag.toString('hex')}:${encrypted.toString('hex')}`;
 }
 
-/**
- * Decrypt a value produced by encrypt().
- * Passes through plain-text values (no "enc:" prefix) so legacy rows
- * continue to work until the migration script re-encrypts them.
- */
+//Decrypt a value produced by encrypt().
 export function decrypt(value: string): string {
   if (!value.startsWith('enc:')) {
     // Legacy plain-text token — return as-is (migration not yet run)
@@ -86,9 +67,7 @@ export function decrypt(value: string): string {
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
 }
 
-/**
- * Returns true if a value has already been encrypted by this module.
- */
+//Returns true if a value has already been encrypted by this module.
 export function isEncrypted(value: string): boolean {
   return value.startsWith('enc:');
 }

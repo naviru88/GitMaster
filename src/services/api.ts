@@ -1,6 +1,4 @@
-/* ============================================================
-   Typed API Client — used client-side
-   ============================================================ */
+//yped API Client — used client-side
 
 import type {
   User,
@@ -81,7 +79,7 @@ async function del<T>(url: string) {
   return handleResponse<T>(await fetch(`${BASE}${url}`, { method: 'DELETE' }));
 }
 
-// -------- Auth --------
+//Auth
 export const auth = {
   register: (name: string, email: string, password: string) =>
     post<User>('/auth/register', { name, email, password }),
@@ -91,14 +89,14 @@ export const auth = {
   logout: () => post<{ success: boolean }>('/auth/logout'),
 };
 
-// -------- Accounts --------
+// Accounts
 export const accounts = {
   list: () => get<Account[]>(`/accounts`),
   create: (data: AccountCreate) => post<Account>(`/accounts`, data),
   remove: (id: string) => del<void>(`/accounts/${id}`),
 };
 
-// -------- GitHub Repos --------
+// GitHub Repos
 export const github = {
   repos: {
     list: (accountId: string, page?: number) =>
@@ -151,11 +149,7 @@ export const github = {
         return { blob: await response.blob(), filename: response.headers.get('content-disposition') || path.split('/').pop() || 'download' };
       });
     },
-    // Deletes every file under a folder path, one commit per file, via
-    // repeated deleteFile calls. GitHub's Contents API has no concept of a
-    // "folder" as a real object (git only tracks files/blobs), so there's
-    // no single endpoint to delete a directory — this is the closest
-    // equivalent: list everything under the path, then remove each file.
+    // Deletes every file under a folder path, one commit per file.
     deleteFolder: async (
       accountId: string, owner: string, repo: string, folderPath: string, message: string, branch?: string,
       onProgress?: (done: number, total: number) => void,
@@ -206,7 +200,7 @@ export const github = {
   merge: {
     merge: (accountId: string, owner: string, repo: string, base: string, head: string, message?: string) =>
       post<GitHubMergeResult>(`/github/merge?accountId=${accountId}`, { owner, repo, base, head, message }),
-    // -------- Conflict detection & in-app resolution --------
+    // Conflict detection & in-app resolution
     checkConflicts: (accountId: string, owner: string, repo: string, base: string, head: string) => {
       const params = new URLSearchParams({ accountId, owner, repo, base, head });
       return get<MergeConflictCheckResult>(`/github/merge-conflicts?${params.toString()}`);
@@ -220,7 +214,7 @@ export const github = {
       }),
   },
 
-  // -------- Push (batch commit) --------
+  // Push (batch commit)
   push: {
     batch: (
       accountId: string, owner: string, repo: string, branch: string,
@@ -233,7 +227,7 @@ export const github = {
       ),
   },
 
-  // -------- Pull (archive download) --------
+  // Pull (archive download)
   pull: {
     download: (accountId: string, owner: string, repo: string, ref: string, format?: 'zip' | 'tar.gz') => {
       const params = new URLSearchParams({ accountId, owner, repo, ref, format: format || 'zip' });
@@ -248,11 +242,7 @@ export const github = {
   },
 };
 
-// -------- Changelog Projects --------
-// NOTE: these back the standalone "Projects/Changelog" feature (wizard,
-// ProjectView, DashboardView in layout/). That feature is not currently
-// reachable from the app's navigation — these exist so the components
-// compile, not because the feature is wired up yet.
+//Changelog Projects
 
 export function validateRepo(data: { githubUrl: string; accessToken?: string }) {
   return post<{
@@ -305,10 +295,130 @@ export function updateChangelog(id: string, data: { draftMarkdown?: string; stat
   return put<Changelog>(`/changelog/${id}`, data);
 }
 
-// -------- AI --------
+//AI
 export const ai = {
   commitMessage: (diff: string, context?: string) =>
     post<{ message: string }>(`/ai/commit-message`, { diff, context }),
   readme: (repoName: string, description: string, techStack?: string, files?: string[]) =>
     post<{ readme: string }>(`/ai/readme`, { repoName, description, techStack, files }),
+};
+
+// Releases
+export interface ReleaseCommit {
+  id: string;
+  sha: string;
+  message: string;
+  authorName: string | null;
+  authorEmail: string | null;
+  committedAt: string | null;
+  changeType: 'ADDED' | 'CHANGED' | 'FIXED' | 'REMOVED' | 'DEPRECATED' | 'SECURITY' | null;
+  note: string | null;
+  order: number;
+}
+
+export interface Release {
+  id: string;
+  projectId: string;
+  version: string;
+  level: 'MAJOR' | 'MINOR' | 'PATCH';
+  title: string | null;
+  description: string | null;
+  releasedAt: string;
+  published: boolean;
+  parentId: string | null;
+  order: number;
+  commits: ReleaseCommit[];
+  children: Release[];
+}
+
+export interface ReleaseListResponse {
+  project: { id: string; name: string; fullName: string };
+  tree: Release[];
+  count: number;
+}
+
+export const releases = {
+  async resolveProject(input: { owner: string; repo: string; githubUrl: string; name?: string }) {
+    return post<{ id: string; name: string; owner: string; repo: string }>(
+      '/releases/project',
+      input,
+    );
+  },
+
+  async list(projectId: string, opts?: { includeUnpublished?: boolean }) {
+    const qs = opts?.includeUnpublished ? '?published=all' : '';
+    return get<ReleaseListResponse>(`/projects/${projectId}/releases${qs}`);
+  },
+
+  async create(
+    projectId: string,
+    input: {
+      version: string;
+      title?: string;
+      description?: string;
+      releasedAt?: string;
+      published?: boolean;
+    },
+  ) {
+    return post<Release>(`/projects/${projectId}/releases`, input);
+  },
+
+  async get(releaseId: string) {
+    return get<Release>(`/releases/${releaseId}`);
+  },
+
+  async update(
+    releaseId: string,
+    patch: {
+      version?: string;
+      title?: string | null;
+      description?: string | null;
+      releasedAt?: string;
+      published?: boolean;
+    },
+  ) {
+    return put<Release>(`/releases/${releaseId}`, patch);
+  },
+
+  async delete(releaseId: string) {
+    return del<{
+      deleted: boolean;
+      version: string;
+      cascadedChildren: number;
+      cascadedCommits: number;
+    }>(`/releases/${releaseId}`);
+  },
+
+  async attachCommit(
+    releaseId: string,
+    input: {
+      sha: string;
+      message: string;
+      authorName?: string;
+      authorEmail?: string;
+      committedAt?: string;
+      changeType?: ReleaseCommit['changeType'];
+      note?: string;
+      order?: number;
+    },
+  ) {
+    return post<ReleaseCommit>(`/releases/${releaseId}/commits`, input);
+  },
+
+  async detachCommit(releaseId: string, commitId: string) {
+    return del<{ deleted: boolean; sha: string }>(
+      `/releases/${releaseId}/commits/${commitId}`,
+    );
+  },
+
+  exportUrl(
+    projectId: string,
+    opts?: { format?: 'html'; disposition?: 'inline' | 'attachment'; theme?: 'light' | 'dark' | 'auto' },
+  ) {
+    const params = new URLSearchParams();
+    params.set('format', opts?.format ?? 'html');
+    if (opts?.disposition) params.set('disposition', opts.disposition);
+    if (opts?.theme) params.set('theme', opts.theme);
+    return `/api/projects/${projectId}/releases/export?${params.toString()}`;
+  },
 };

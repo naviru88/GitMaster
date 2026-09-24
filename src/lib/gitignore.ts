@@ -1,18 +1,10 @@
-/**
- * Lightweight .gitignore pattern matcher — no external dependencies.
- * Supports the most common patterns: simple names, globs (*, ?),
- * directory patterns (trailing /), negation (!), and comments (#).
- */
-
 export interface Pattern {
   regex: RegExp;
   negative: boolean;
   dirOnly: boolean;
 }
 
-/**
- * Parse raw .gitignore content into a list of compiled patterns.
- */
+//Parse raw .gitignore content into a list of compiled patterns.
 export function parseGitignore(content: string): Pattern[] {
   const lines = content.split(/\r?\n/);
   const patterns: Pattern[] = [];
@@ -44,9 +36,7 @@ export function parseGitignore(content: string): Pattern[] {
   return patterns;
 }
 
-/**
- * Convert a gitignore glob pattern to a RegExp.
- */
+//Convert a gitignore glob pattern to a RegExp.
 function globToRegex(pattern: string): RegExp {
   // If pattern starts with /, it's anchored to root
   const anchored = pattern.startsWith('/');
@@ -122,13 +112,7 @@ function globSegmentToRegex(segment: string): string {
   return result;
 }
 
-/**
- * Filter an array of file paths through .gitignore patterns.
- * Returns { included, excluded } arrays.
- *
- * @param paths - Array of relative file paths (e.g. "src/index.ts")
- * @param gitignoreContent - Raw .gitignore file content
- */
+// Filter an array of file paths through .gitignore patterns.
 export function filterByGitignore(
   paths: string[],
   gitignoreContent: string,
@@ -144,7 +128,6 @@ export function filterByGitignore(
     for (const { regex, negative, dirOnly } of patterns) {
       if (regex.test(normalized)) {
         // dirOnly patterns only match if the path looks like it's in a directory
-        // (we can't truly tell without filesystem, so we check if the path contains a /)
         if (dirOnly && !normalized.includes('/')) continue;
         if (negative) {
           isIgnored = false;
@@ -164,23 +147,7 @@ export function filterByGitignore(
   return { included, excluded };
 }
 
-/**
- * Decide whether a *directory itself* (not a file inside it) should be
- * pruned — i.e. never descended into at all while walking a dropped folder.
- *
- * This is deliberately separate from filterByGitignore's per-file matching:
- * that function skips `dirOnly` patterns when the tested path has no `/`,
- * because for a *file* path that's the only cheap signal that a segment
- * upstream is a directory. But here the path IS a directory — a top-level
- * folder like "node_modules" must still match a `node_modules/` pattern
- * even though its own relative path contains no slash. Applying the file
- * heuristic here would silently defeat pruning for every top-level ignored
- * directory, which is precisely the common case (node_modules, dist, .git).
- *
- * Matches real git's own behavior: once a directory is ignored, its
- * contents are never inspected, so a negated (`!`) rule for something
- * *inside* an ignored directory intentionally has no effect here.
- */
+//Decide whether a *directory itself* (not a file inside it) should bepruned
 export function shouldIgnoreDir(dirPath: string, patterns: Pattern[]): boolean {
   const normalized = dirPath.replace(/\\/g, '/');
   let ignored = false;
@@ -192,10 +159,7 @@ export function shouldIgnoreDir(dirPath: string, patterns: Pattern[]): boolean {
   return ignored;
 }
 
-/**
- * Common default gitignore patterns for well-known files/dirs
- * that should almost always be excluded.
- */
+//Common default gitignore patterns for well-known files/dirs that should almost always be excluded.
 export const DEFAULT_GITIGNORE_PATTERNS = `# Common defaults (auto-applied by GitMaster)
 node_modules/
 .git/

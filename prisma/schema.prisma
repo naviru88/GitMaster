@@ -3,8 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
 }
 
 model User {
@@ -14,6 +15,7 @@ model User {
   password  String   // hashed
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  profile  UserProfile?
 
   accounts Account[]
 }
@@ -45,6 +47,9 @@ model Project {
   updatedAt   DateTime @updatedAt
 
   changelogs  Changelog[]
+  releases   Release[]
+
+  @@unique([owner, repo])
 }
 
 model Changelog {
@@ -62,4 +67,139 @@ model Changelog {
 
   projectId     String
   project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+// SETTINGS / PROFILE
+model UserProfile {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Profile
+  displayName       String?
+  bio               String?  @db.Text
+  avatarUrl         String?
+  location          String?
+  website           String?
+  pronouns          String?
+  company           String?
+  githubUsername    String?
+
+  // Appearance
+  theme             ThemePreference @default(SYSTEM)
+  accentColor       String          @default("blue")
+  fontSize          FontSize        @default(MEDIUM)
+  reducedMotion     Boolean         @default(false)
+  compactMode       Boolean         @default(false)
+
+  // Preferences
+  defaultLandingPage String          @default("/dashboard")
+  timezone           String          @default("UTC")
+  dateFormat         DateFormat      @default(MMM_D_YYYY)
+  language           String          @default("en")
+
+  // Notifications
+  emailNotifications     Boolean @default(true)
+  pushNotifications      Boolean @default(false)
+  notifyOnCommit         Boolean @default(true)
+  notifyOnRelease        Boolean @default(true)
+  notifyOnMention        Boolean @default(true)
+  notifyOnWeeklyDigest   Boolean @default(false)
+
+  // Metadata
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@map("user_profiles")
+}
+
+enum ThemePreference {
+  LIGHT
+  DARK
+  SYSTEM
+}
+
+enum FontSize {
+  SMALL
+  MEDIUM
+  LARGE
+}
+
+enum DateFormat {
+  MMM_D_YYYY    // "Sep 24, 2026"
+  DD_MM_YYYY    // "24/09/2026"
+  MM_DD_YYYY    // "09/24/2026"
+  YYYY_MM_DD    // "2026-09-24"
+  RELATIVE      // "2 days ago"
+}
+
+// RELEASE NOTES (version tree)
+model Release {
+  id          String       @id @default(cuid())
+  projectId   String
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  version     String       // "v1", "v1.0", "v1.0.1" — always with "v" prefix
+  level       ReleaseLevel // derived from segment count
+  title       String?      // optional friendly name, e.g. "Auth Overhaul"
+  description String?      @db.Text // markdown body: what changed in this release
+  releasedAt  DateTime     @default(now())
+  published   Boolean      @default(false)
+
+  parentId    String?
+  parent      Release?     @relation("ReleaseTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children    Release[]    @relation("ReleaseTree")
+
+  order       Int          @default(0) // sibling sort order
+
+  commits     ReleaseCommit[]
+
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@unique([projectId, version])
+  @@index([projectId, parentId, order])
+  @@index([projectId, published])
+  @@map("releases")
+}
+
+enum ReleaseLevel {
+  MAJOR   // 1 segment: v1
+  MINOR   // 2 segments: v1.0
+  PATCH   // 3 segments: v1.0.1
+}
+
+// A specific commit tied to a specific release node. Commit data is stored inline (not as an FK to a Commit table) so release notes survive
+
+model ReleaseCommit {
+  id          String       @id @default(cuid())
+  releaseId   String
+  release     Release      @relation(fields: [releaseId], references: [id], onDelete: Cascade)
+
+  sha         String       // full 40-char git sha
+  message     String       @db.Text
+  authorName  String?
+  authorEmail String?
+  committedAt DateTime?
+
+  changeType  ChangeType?  // ADDED / CHANGED / FIXED / ...
+  note        String?      // optional clarification
+
+  order       Int          @default(0)
+
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@unique([releaseId, sha])
+  @@index([releaseId, order])
+  @@map("release_commits")
+}
+
+enum ChangeType {
+  ADDED
+  CHANGED
+  FIXED
+  REMOVED
+  DEPRECATED
+  SECURITY
 }

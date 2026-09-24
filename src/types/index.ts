@@ -1,8 +1,4 @@
-/* ============================================================
-   Shared Types — GitHub Repo Manager
-   ============================================================ */
-
-// ---------- Database ----------
+//Database
 export interface User {
   id: string;
   name: string;
@@ -23,7 +19,7 @@ export interface Account {
 
 export type AccountCreate = Pick<Account, 'label' | 'token'>;
 
-// ---------- GitHub API responses ----------
+// GitHub API responses
 export interface GitHubUser {
   login: string;
   avatar_url: string;
@@ -107,10 +103,7 @@ export interface GitHubMergeResult {
   message: string;
 }
 
-// ---------- Merge conflict resolution ----------
-/** Why a given path is flagged as a real conflict (both sides changed it
- * differently), as opposed to a change that only happened on one side
- * (which the merge auto-applies without asking). */
+//Merge conflict resolution
 export type ConflictKind =
   | 'both-modified'      // both branches changed the file, to different content
   | 'modified-deleted'   // base modified it, head deleted it
@@ -178,7 +171,7 @@ export interface GitHubCreateFileResult {
   };
 }
 
-// ---------- App Views ----------
+//App Views
 export type AppView =
   | 'dashboard'
   | 'account-repos'
@@ -190,15 +183,15 @@ export type AppView =
   | 'view-changelog'
   | 'edit-changelog';
 
-export type RepoTab = 'files' | 'branches' | 'commits';
+export type RepoTab = 'files' | 'branches' | 'commits' | 'releases';
 
-// ---------- File upload ----------
+// File upload
 export interface FileUpload {
   file: File;
   path: string;        // relative path within repo
 }
 
-// ---------- GitHub PRs / tags ----------
+// GitHub PRs / tags
 export interface GitHubPR {
   number: number;
   title: string;
@@ -217,7 +210,7 @@ export interface GitHubTag {
   tarball_url: string;
 }
 
-// ---------- Changelog generation ----------
+// Changelog generation
 export type Category =
   | 'Breaking Changes'
   | 'Features'
@@ -272,7 +265,7 @@ export interface CategorizedChanges {
   total: number;
 }
 
-// ---------- Projects & Changelogs (DB-backed) ----------
+// Projects & Changelogs (DB-backed)
 export interface Project {
   id: string;
   name: string;

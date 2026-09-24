@@ -1,11 +1,4 @@
-/* ============================================================
-   Shared Error Helpers
-   ============================================================ */
-
-/**
- * Parse a raw error thrown by ghFetch() or a GitHub API route handler
- * and return a user-friendly message with an appropriate HTTP status.
- */
+//Shared Error Helpers
 export function githubError(err: unknown): { message: string; status: number } {
   const msg = err instanceof Error ? err.message : String(err);
   const lower = msg.toLowerCase();
@@ -30,7 +23,7 @@ export function githubError(err: unknown): { message: string; status: number } {
     };
   }
 
-  // ---- GitHub HTTP status codes ----
+  // GitHub HTTP status codes
 
   if (msg.includes('GitHub API 400')) {
     return {
@@ -156,7 +149,7 @@ export function githubError(err: unknown): { message: string; status: number } {
     };
   }
 
-  // ---- Generic fallback ----
+  // Generic fallback
   if (lower.includes('encryption') || lower.includes('ciphertext') || lower.includes('token')) {
     return {
       message: 'The saved GitHub account could not be unlocked. Remove it and add it again, then retry the operation.',

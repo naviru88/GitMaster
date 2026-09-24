@@ -66,28 +66,12 @@ interface FileItem {
 /** GitHub's own ceiling for a single blob via the Git Data API. */
 const GITHUB_MAX_FILE_BYTES = 100 * 1024 * 1024;
 
-/** GitHub's Git Trees API unconditionally rejects any path with a `.git`
- * path component (case-insensitive) — this is a hard restriction on their
- * end ("tree.path contains a malformed path component"), not a preference.
- * It must be enforced regardless of .gitignore state, because:
- *  - a project's own .gitignore file almost never lists `.git/` itself,
- *    since real git never needs to be told to ignore its own directory —
- *    but this app reads the raw filesystem, so a selected/dropped folder's
- *    literal .git/ directory is fair game unless blocked here directly.
- *  - even where it wouldn't be rejected, pushing .git internals (config,
- *    refs, COMMIT_EDITMSG — potentially credentials) is never wanted.
- * Because GitHub will always reject these, this block is intentionally
- * NOT overridable via "force include", unlike ordinary .gitignore matches.
- */
+//Ignore Git folder
 function isBlockedGitPath(path: string): boolean {
   return path.split('/').some((seg) => seg.toLowerCase() === '.git');
 }
 
-/** Read a File as base64 via the browser's native FileReader instead of
- * manually chunking bytes through String.fromCharCode + btoa. The manual
- * loop was the main source of the "very slow / freezes" push behavior —
- * FileReader.readAsDataURL is implemented natively by the browser and is
- * both faster and far less likely to block/crash the tab on larger files. */
+//Read a File as base64 via the browser's native FileReader/
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -102,10 +86,7 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
-/** Run async work with bounded concurrency. Used so multiple files are
- * read/encoded in parallel (I/O is async, so this is a real speedup) without
- * ever holding the *entire* batch in flight at once — which is what risked
- * ballooning memory and crashing the tab on large pushes. */
+//Run async work with bounded concurrency.
 async function runWithConcurrency<T>(
   items: T[],
   limit: number,
@@ -133,9 +114,7 @@ function readEntryAsFile(entry: FileSystemFileEntry): Promise<File> {
   return new Promise((resolve, reject) => entry.file(resolve, reject));
 }
 
-/** Read a FileSystemFileEntry directly as text (used for eagerly reading a
- * root .gitignore before the main walk, so we don't need to round-trip
- * through a File + a second FileReader call at the caller). */
+//Read a FileSystemFileEntry directly as text
 function readEntryAsText(entry: FileSystemFileEntry): Promise<string> {
   return new Promise((resolve, reject) => {
     entry.file((file) => {
@@ -147,23 +126,12 @@ function readEntryAsText(entry: FileSystemFileEntry): Promise<string> {
   });
 }
 
-/** FileSystemDirectoryReader.readEntries only returns up to ~100 entries per
- * call in Chromium browsers, so it must be called repeatedly until it
- * returns an empty array. */
+//FileSystemDirectoryReader.
 function readDirectoryEntries(reader: FileSystemDirectoryReader): Promise<FileSystemEntry[]> {
   return new Promise((resolve, reject) => reader.readEntries(resolve, reject));
 }
 
-/** Before the real (potentially huge) recursive walk begins, look for a
- * project-root .gitignore so directory pruning below can use the real
- * rules from the very first directory it considers descending into,
- * instead of only the generic defaults. Checks two places, cheaply:
- *  1. A .gitignore dropped directly (alongside other loose files).
- *  2. One level inside each dropped directory — the common case, since
- *     dropping "my-project/" means my-project/.gitignore is one level down.
- * Deliberately does NOT recurse further than that: nested .gitignore files
- * are out of scope here, same as before this change (the existing
- * post-selection auto-detect effect still catches those separately). */
+// gitignore detection
 async function findRootGitignoreContent(entries: FileSystemEntry[]): Promise<string | null> {
   for (const entry of entries) {
     if (entry.isFile && entry.name === '.gitignore') {
@@ -185,24 +153,7 @@ async function findRootGitignoreContent(entries: FileSystemEntry[]): Promise<str
   return null;
 }
 
-/** Recursively walk a dropped FileSystemEntry (file or directory) and push
- * every file found into `collected`, preserving folder structure via
- * `entry.fullPath` (which is what makes drag-and-drop able to replicate
- * "Select Folder" without going through the native file picker at all).
- *
- * Directories are pruned — never descended into, their contents never
- * read — the moment they match either the hard `.git` block or the given
- * .gitignore `patterns` (when provided). This mirrors how real `git`
- * itself walks a working tree: an ignored directory's contents are simply
- * never inspected. It's also what actually keeps a huge ignored directory
- * (node_modules, .git, build output) from costing any scan time at all,
- * versus discovering every file inside it and filtering afterward.
- *
- * `onFileFound` fires as each file is discovered — this is what drives the
- * live "Scanning… found N files" indicator, since a large project can take
- * a real, visible amount of time to walk with zero other feedback
- * otherwise. `onDirPruned` fires once per skipped directory, with its
- * relative path, so the caller can surface what got skipped and why. */
+// Recursively walk a dropped FileSystemEntry (file or directory) and push every file found into `collected`.
 async function collectFilesFromEntry(
   entry: FileSystemEntry,
   collected: FileItem[],
@@ -218,11 +169,7 @@ async function collectFilesFromEntry(
   } else if (entry.isDirectory) {
     const relPath = (entry.fullPath || `/${entry.name}`).replace(/^\//, '');
 
-    // Hard block: never descend into a .git directory, regardless of
-    // .gitignore state (see isBlockedGitPath for why this can't be
-    // overridden). Pruning it here — rather than discovering its contents
-    // and filtering them out later — is what actually avoids reading
-    // potentially large repo internals off disk at all.
+    // Hard block: never descend into a .git directory.
     if (isBlockedGitPath(relPath)) {
       onDirPruned?.(relPath);
       return;
@@ -235,8 +182,7 @@ async function collectFilesFromEntry(
 
     const reader = (entry as FileSystemDirectoryEntry).createReader();
     let entries: FileSystemEntry[] = [];
-    // Keep calling readEntries until it returns [] — a single call is not
-    // guaranteed to return the full directory listing.
+    // Keep calling readEntries until it returns [] — a single call is not guaranteed to return the full directory listing.
     while (true) {
       const batch = await readDirectoryEntries(reader);
       if (batch.length === 0) break;
@@ -264,16 +210,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
   // File state
   const [rawFiles, setRawFiles] = useState<FileItem[]>([]);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
-  // While a dropped folder is being recursively walked (which is silent
-  // otherwise, and can take real time for large projects), this drives a
-  // live "Scanning… found N files" indicator instead of the UI looking
-  // frozen with no feedback at all.
   const [scanningCount, setScanningCount] = useState<number | null>(null);
-  // Directories skipped entirely during a drag-and-drop scan (never
-  // descended into, so their contents were never read). Accumulates across
-  // multiple drops into the same selection; only drag-and-drop can populate
-  // this — the native folder/file pickers hand back an already-flat list
-  // with no opportunity to prune before reading.
   const [prunedDirs, setPrunedDirs] = useState<string[]>([]);
   const [commitMessage, setCommitMessage] = useState('');
 
@@ -299,10 +236,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
   const [showExcluded, setShowExcluded] = useState(false);
   const [forceIncludes, setForceIncludes] = useState<Set<string>>(new Set());
 
-  // Failsafe: files that failed to read/encode, or that are too large for
-  // GitHub's blob API. Tracked separately from .gitignore exclusion so the
-  // UI can explain *why* each file was skipped, and so one bad file never
-  // blocks the rest of the batch.
+  // Failsafe: files that failed to read/encode, or that are too large for GitHub's blob API. Tracked separately from .gitignore exclusion
   const [invalidFiles, setInvalidFiles] = useState<Map<string, string>>(new Map());
 
   // Stable helper
@@ -313,20 +247,12 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
   }, []);
 
   // Apply gitignore filtering
-  // NOTE: we intentionally do NOT gate this on `gitignoreSource !== 'none'`.
-  // `gitignoreContent` is always initialized to DEFAULT_GITIGNORE_PATTERNS, so
-  // even when no .gitignore has been auto-detected or uploaded ("none"), the
-  // sensible defaults (node_modules/, .git/, .DS_Store, *.log, ...) must still
-  // apply whenever gitignoreEnabled is on. `gitignoreSource` is purely a UI
-  // label (auto-detected / uploaded / none) and must never affect filtering.
   const { included, excluded } = useMemo(() => {
     if (rawFiles.length === 0) {
       return { included: [] as FileItem[], excluded: [] as FileItem[] };
     }
 
-    // Hard block for .git/ paths — applies even with .gitignore filtering
-    // toggled off, and is never overridable via forceIncludes (see
-    // isBlockedGitPath above for why).
+    // Hard block for .git/ paths
     const gitBlocked = new Set(
       rawFiles.map((f) => getRelativePath(f)).filter(isBlockedGitPath),
     );
@@ -360,8 +286,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
   }, [rawFiles, gitignoreEnabled, gitignoreContent, forceIncludes, getRelativePath]);
 
   // Files that pass .gitignore filtering AND are actually readable/valid.
-  // This is the list that gets cached and pushed — invalid files are
-  // automatically excluded rather than blocking the rest of the batch.
   const pushable = useMemo(
     () => included.filter((f) => !invalidFiles.has(getRelativePath(f))),
     [included, invalidFiles, getRelativePath],
@@ -395,17 +319,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
     }
   }, [rawFiles]);
 
-  // Incremental file processing - runs in background when the *included*
-  // (post-.gitignore-filter) file set changes.
-  //
-  // IMPORTANT: this intentionally reads from `included`, not `rawFiles`.
-  // Reading/base64-encoding a file is the expensive part of a push (it's
-  // what actually consumes memory and inflates the request payload), so we
-  // must never do that work for files that .gitignore is going to exclude
-  // anyway (e.g. node_modules/, build output, lockfile noise, etc). Doing so
-  // was previously silently processing every selected file regardless of
-  // filtering, which both slowed down file selection and defeated the whole
-  // point of .gitignore-based exclusion (reducing upload size/capacity).
+  // Incremental file processing
   useEffect(() => {
     if (included.length === 0) return;
 
@@ -422,13 +336,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
 
       const newlyInvalid = new Map<string, string>();
 
-      // CONCURRENCY: read/encode multiple files at once instead of one at a
-      // time. This is local disk I/O via FileReader, not a network call to
-      // GitHub — there's no abuse-detection concern here (unlike the
-      // server-side blob upload concurrency, which is deliberately capped
-      // low). 8 gives a real speedup while still leaving enough headroom
-      // that a handful of large files in flight together won't spike memory
-      // or freeze the tab.
+      // CONCURRENCY: read/encode multiple files at once instead of one at a time.
       const READ_CONCURRENCY = 8;
 
       await runWithConcurrency(included, READ_CONCURRENCY, async (f) => {
@@ -443,8 +351,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
           return;
         }
 
-        // FAILSAFE 1: reject files GitHub's blob API can't accept anyway,
-        // without ever reading their bytes into memory.
+        // FAILSAFE 1: reject files GitHub's blob API can't accept.
         if (f.size > GITHUB_MAX_FILE_BYTES) {
           newlyInvalid.set(rp, `Too large (${(f.size / 1024 / 1024).toFixed(1)}MB) — GitHub's limit is 100MB per file`);
           doneCount++;
@@ -452,9 +359,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
           return;
         }
 
-        // FAILSAFE 2: a corrupted/unreadable/permission-denied file is
-        // caught and skipped here, per-file — it no longer halts the rest
-        // of the batch the way a single failure previously did.
+        // FAILSAFE 2: a corrupted/unreadable/permission-denied file is caught and skipped here.
         try {
           const base64 = await fileToBase64(f.file);
           if (cancelled || processingIdRef.current !== myId) return;
@@ -482,9 +387,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
       setIsProcessing(false);
     };
 
-    // Clean stale cache/invalid entries — anything no longer in the included
-    // set (removed by the user, or newly excluded by .gitignore) should not
-    // linger in memory or get pushed.
+    // Clean stale cache/invalid entries
     const currentPaths = new Set(included.map((f) => getRelativePath(f)));
     let hadCleanup = false;
     for (const key of fileCacheRef.current.keys()) {
@@ -513,9 +416,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
     };
   }, [included, getRelativePath]);
 
-  // Immediate confirmation the instant a selection registers, so there's
-  // never a gap where the user can't tell whether anything happened. Larger
-  // batches get an extra heads-up that it'll take a moment.
+  // Immediate confirmation the instant a selection registers.
   const notifySelection = (count: number) => {
     if (count > 500) {
       toast.info(`${count} files selected — this may take a bit to read and cache before pushing.`);
@@ -536,9 +437,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
     setRawFiles(items);
     setForceIncludes(new Set());
     setInvalidFiles(new Map());
-    // A native picker replaces the whole selection with an already-flat
-    // list — nothing was pruned to get it, and any dirs pruned by an
-    // earlier drop no longer apply to what's now selected.
+    // A native picker replaces the whole selection with an already-flat list
     setPrunedDirs([]);
     notifySelection(items.length);
     e.target.value = '';
@@ -560,10 +459,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
     e.target.value = '';
   };
 
-  // ==================== Drag & drop (bypasses the native file picker) ====================
-  // Uses a counter ref instead of a plain boolean because dragenter/dragleave
-  // fire repeatedly as the pointer crosses child elements inside the drop
-  // zone; a naive boolean flag flickers the overlay on/off constantly.
+  // Drag & drop (bypasses the native file picker) 
   const dragCounterRef = useRef(0);
 
   const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
@@ -600,16 +496,14 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
     const collected: FileItem[] = [];
     const prunedThisDrop: string[] = [];
 
-    // Immediate feedback the moment the drop is registered — before any
-    // traversal has happened yet, so there's never a silent gap.
+    // Immediate feedback the moment the drop is registered
     setScanningCount(0);
     let lastToastUpdate = 0;
 
     try {
       const items = dt.items;
       if (items && items.length > 0 && typeof items[0]?.webkitGetAsEntry === 'function') {
-        // Modern path (Chrome/Brave/Firefox): supports whole folders,
-        // recursively, with structure preserved via entry.fullPath.
+        // Modern path (Chrome/Brave/Firefox)
         const entries: FileSystemEntry[] = [];
         for (let i = 0; i < items.length; i++) {
           const item = items[i];
@@ -618,11 +512,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
           if (entry) entries.push(entry);
         }
 
-        // Look for a project .gitignore *before* the real walk starts, so
-        // directory pruning below can use the real rules from its very
-        // first decision instead of only the generic defaults. Only
-        // matters when filtering is on — with it off, nothing gets pruned
-        // by pattern anyway (only the hard .git block still applies).
+        // Look for a project .gitignore *before* the real walk starts
         let patterns: Pattern[] | null = null;
         if (gitignoreEnabled) {
           let effectiveContent = gitignoreContent;
@@ -634,9 +524,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
               setGitignoreContent(found);
             }
           } catch {
-            // Couldn't read it early — fall back to whatever rules were
-            // already active and let the normal post-selection detection
-            // effect try again once rawFiles updates.
+            // Couldn't read it early
           }
           patterns = parseGitignore(effectiveContent);
         }
@@ -648,9 +536,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
             patterns,
             (dirPath) => prunedThisDrop.push(dirPath),
             () => {
-              // Batch state updates roughly every 20 files instead of on
-              // every single one — thousands of individual re-renders during
-              // a big node_modules scan would itself slow things down.
+              // Batch state updates roughly every 20 files instead of on every single one
               if (collected.length - lastToastUpdate >= 20) {
                 lastToastUpdate = collected.length;
                 setScanningCount(collected.length);
@@ -660,9 +546,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
         }
       }
 
-      // Fallback: flat file list only (no folder structure) — used if the
-      // browser doesn't support webkitGetAsEntry at all. There's no entry
-      // tree to prune here, so nothing to skip up front.
+      // Fallback: flat file list only (no folder structure)
       if (collected.length === 0 && dt.files && dt.files.length > 0) {
         for (let i = 0; i < dt.files.length; i++) {
           const f = dt.files[i];
@@ -689,9 +573,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
       toast.success(`Found ${collected.length} file(s)${prunedNote} — reading and caching now…`);
     }
 
-    // Merge into the existing selection: dropping more files/folders adds to
-    // what's already selected, with a re-drop of the same path overwriting
-    // the earlier version rather than duplicating it.
+    // Merge into the existing selection: dropping more files/folders adds to what's already selected.
     setRawFiles((prev) => {
       const map = new Map(prev.map((f) => [f.relativePath, f]));
       for (const f of collected) map.set(f.relativePath, f);
@@ -743,11 +625,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
     setPushing(true);
     setPushProgress(0);
 
-    // A single evolving toast (loading → success/error) instead of a bare
-    // one-line message that only appears at the very end. This is the main
-    // "something is happening" signal — it stays visible even if the person
-    // switches tabs or scrolls the dialog, and it's driven by sonner's
-    // richColors theme rather than a default unstyled browser notification.
+    // A single evolving toast (loading → success/error)
     const toastId = toast.loading(`Preparing ${pushable.length} file(s)…`, {
       description: 'Reading and encoding files before upload.',
     });
@@ -762,10 +640,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
         if (cached) {
           fileData.push({ path: rp, content: cached, isBase64: true });
         } else {
-          // Fallback: read on the fly (shouldn't normally happen, since the
-          // background caching effect should have already handled it). Any
-          // failure here is caught per-file so one bad file doesn't abort
-          // an otherwise-ready push — it's just skipped and reported.
+          // Fallback
           try {
             const base64 = await fileToBase64(f.file);
             fileData.push({ path: rp, content: base64, isBase64: true });
@@ -774,8 +649,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
           }
         }
         setPushProgress(Math.round(((i + 1) / pushable.length) * 90));
-        // Don't spam the toast with a re-render on every single file —
-        // update it periodically so the count still visibly ticks up.
+        // Don't spam the toast with a re-render on every single file
         if (i % 10 === 0 || i === pushable.length - 1) {
           toast.loading(`Preparing files… (${i + 1}/${pushable.length})`, { id: toastId });
         }
@@ -874,9 +748,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
       open={open}
       onOpenChange={(v) => {
         if (!v && pushing) {
-          // Prevent the dialog (and its close-guarded toast) from vanishing
-          // mid-upload — closing here would abandon visibility into an
-          // in-flight push with no way to tell if it actually finished.
+          // Prevent the dialog (and its close-guarded toast) from vanishing mid-upload
           toast.info('Push in progress — please wait for it to finish.');
           return;
         }
@@ -931,11 +803,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
           </div>
         </DialogHeader>
 
-        {/* Upload progress — deliberately placed OUTSIDE the scrollable
-            content area (shrink-0, not inside overflow-y-auto) so it stays
-            visible no matter how far the file list is scrolled. This is the
-            main "the site is doing something" signal during the actual
-            network upload. */}
+        {/* Upload progress */}
         {pushing && (
           <div className="shrink-0 flex flex-col gap-1.5 rounded-lg border bg-muted/40 px-3 py-2.5">
             <div className="flex items-center justify-between text-sm font-medium">
@@ -950,7 +818,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
         )}
 
         <div className="flex flex-col gap-4 overflow-y-auto flex-1 min-h-0">
-          {/* ==================== STEP 1: Commit Message ==================== */}
+          {/* STEP 1: Commit Message */}
           {step === 'message' && (
             <div className="flex flex-col gap-3 py-2">
               <div className="flex flex-col gap-2">
@@ -969,7 +837,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
             </div>
           )}
 
-          {/* ==================== STEP 2: Select Files ==================== */}
+          {/*STEP 2: Select Files*/}
           {step === 'files' && (
             <div
               className="flex flex-col gap-4 py-2 relative"
@@ -986,9 +854,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                 </div>
               )}
 
-              {/* Live folder-scan progress — this is the "something is
-                  happening" signal during recursive directory traversal,
-                  which otherwise has zero feedback while it runs. */}
+              {/* Live folder-scan progress*/}
               {scanningCount !== null && (
                 <div className="flex items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2.5 text-sm">
                   <Loader2 className="size-4 animate-spin text-primary shrink-0" />
@@ -996,11 +862,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                 </div>
               )}
 
-              {/* Directories skipped entirely during the drag-and-drop scan —
-                  these were never descended into, so their contents were
-                  never read off disk at all (unlike ordinary .gitignore
-                  exclusion, which still has to discover a file before it can
-                  filter it out). Only drag-and-drop can populate this. */}
+              {/* Directories skipped entirely during the drag-and-drop scan */}
               {scanningCount === null && prunedDirs.length > 0 && (
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -1219,9 +1081,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                     </>
                   )}
 
-                  {/* Editable gitignore content — independent of whether
-                      anything is currently excluded; rules can be added
-                      proactively before any file happens to match them. */}
+                  {/* Editable gitignore content*/}
                   {gitignoreEnabled && gitignoreSource !== 'none' && (
                     <Collapsible>
                       <CollapsibleTrigger asChild>
@@ -1343,7 +1203,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
             </div>
           )}
 
-          {/* ==================== STEP 3: Review & Push ==================== */}
+          {/* STEP 3: Review & Push */}
           {step === 'review' && (
             <div className="flex flex-col gap-4 py-2">
               {/* Summary card */}

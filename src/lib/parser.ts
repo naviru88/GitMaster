@@ -67,8 +67,7 @@ export function normalizeChanges(
   const commitShas = new Set(commits.map((c) => c.sha));
 
   for (const pr of prs) {
-    // We can't easily correlate PR merge commits here, so include all merged PRs
-    // that don't obviously duplicate a commit title
+    // We can't easily correlate PR merge commits here, so include all merged PRs that don't obviously duplicate a commit title
     const isDuplicate = commits.some(
       (c) =>
         c.commit.message.split('\n')[0].toLowerCase().includes(pr.title.toLowerCase()) ||

@@ -45,10 +45,6 @@ export default function PullDialog({ open, onOpenChange }: PullDialogProps) {
       description: `Fetching ${format} archive from GitHub — this can take a moment for larger repos.`,
     });
 
-    // We don't get real byte-level progress from a single fetch-a-blob call,
-    // so simulate a steady climb toward 90% while the request is in flight
-    // (never claiming 100% until it's actually done) — this is what gives
-    // the visible "still working" motion rather than a static/frozen bar.
     const simInterval = setInterval(() => {
       setPullProgress((p) => (p < 90 ? p + (90 - p) * 0.1 : p));
     }, 250);

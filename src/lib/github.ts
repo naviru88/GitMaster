@@ -1,6 +1,4 @@
-/* ============================================================
-   GitHub REST API Service — used server-side only
-   ============================================================ */
+//GitHub REST API Service — used server-side only
 
 const GITHUB_API = 'https://api.github.com';
 
@@ -18,20 +16,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * ghFetch retries transient rate-limit responses instead of failing
- * immediately. GitHub has two distinct kinds of 403/429 here:
- *  - Primary rate limit: the normal per-hour quota (X-RateLimit-Remaining: 0),
- *    which tells us exactly when it resets via X-RateLimit-Reset.
- *  - Secondary/abuse rate limit: triggered by request *pattern* (e.g. too
- *    many concurrent writes to content-creation endpoints like blob
- *    creation), independent of quota. GitHub sends a Retry-After header (or
- *    puts the wait in the response body) and expects the client to back off
- *    and retry — it is NOT meant to be a hard failure.
- * Failing outright on the first hit (the old behavior) turned a brief,
- * self-correcting slowdown into a broken push. Retrying with the server-told
- * wait time (or a short exponential backoff as a fallback) fixes that.
- */
+//ghFetch retries transient rate-limit responses instead of failingimmediately.
 async function ghFetch<T>(url: string, token?: string, init?: RequestInit, retriesLeft = 4): Promise<T> {
   const res = await fetch(url, {
     ...init,
@@ -42,8 +27,8 @@ async function ghFetch<T>(url: string, token?: string, init?: RequestInit, retri
     const retryAfterHeader = res.headers.get('retry-after');
     const remaining = res.headers.get('x-ratelimit-remaining');
     const resetHeader = res.headers.get('x-ratelimit-reset');
-    const body = await res.text().catch(() => '');
-    const isSecondary = res.status === 429 || /secondary rate limit|abuse detection/i.test(body);
+    const errBody = await res.text().catch(() => '');
+    const isSecondary = res.status === 429 || /secondary rate limit|abuse detection/i.test(errBody);
     const isPrimary = remaining === '0';
 
     if (!token && !isSecondary && !isPrimary) {
@@ -57,12 +42,10 @@ async function ghFetch<T>(url: string, token?: string, init?: RequestInit, retri
       } else if (isPrimary && resetHeader) {
         waitMs = Math.max(1000, parseInt(resetHeader, 10) * 1000 - Date.now());
       } else {
-        // Exponential backoff with jitter when GitHub didn't tell us exactly
-        // how long to wait.
+        // Exponential backoff with jitter when GitHub didn't tell us exactly how long to wait.
         waitMs = (5 - retriesLeft) * 1500 + Math.random() * 500;
       }
-      // Cap the wait so a batch of blob uploads can't individually stall
-      // past the server function's own timeout.
+      // Cap the wait so a batch of blob uploads can't individually stall past the server function's own timeout.
       waitMs = Math.min(waitMs, 15000);
       await sleep(waitMs);
       return ghFetch<T>(url, token, init, retriesLeft - 1);
@@ -70,22 +53,20 @@ async function ghFetch<T>(url: string, token?: string, init?: RequestInit, retri
 
     if (!token) throw new Error('RATE_LIMITED');
     if (isSecondary || isPrimary) throw new Error('RATE_LIMITED_AUTH');
-    throw new Error(`GitHub API 403: ${body.slice(0, 200)}`);
+    throw new Error(`GitHub API 403: ${errBody.slice(0, 200)}`);
   }
 
+  // Read the body once, regardless of status.
+  const body = await res.text().catch(() => '');
+
   if (!res.ok) {
-    const body = await res.text();
     throw new Error(`GitHub API ${res.status}: ${body.slice(0, 300)}`);
   }
-  // Some successful GitHub endpoints (notably a merge that is already
-  // complete) can return 204 or another empty successful response. Calling
-  // res.json() unconditionally turns that valid result into
-  // "Unexpected end of JSON input".
-  const body = await res.text();
+
   return (body ? JSON.parse(body) : undefined) as T;
 }
 
-// -------- User / Validate --------
+// User / Validate
 export async function getGitHubUser(token?: string) {
   return ghFetch<import('@/types').GitHubUser>(`${GITHUB_API}/user`, token);
 }
@@ -94,15 +75,7 @@ export async function getPublicUser(username: string) {
   return ghFetch<import('@/types').GitHubUser>(`${GITHUB_API}/users/${username}`);
 }
 
-// -------- Repositories --------
-
-/**
- * List repos for the current account. Uses `affiliation` rather than
- * `type=owner` so this includes repos you have collaborator/push access to
- * but didn't create yourself — e.g. someone else's repo that added you as a
- * collaborator. `type=owner` (the previous behavior) silently excluded
- * those entirely.
- */
+//Repositories
 export async function listRepos(token: string | undefined, username: string, page = 1, perPage = 30) {
   const url = username === '*'
     ? `${GITHUB_API}/user/repos?sort=updated&per_page=${perPage}&page=${page}&affiliation=owner,collaborator,organization_member`
@@ -115,18 +88,7 @@ export async function searchRepos(token: string | undefined, query: string, page
   return ghFetch<{ total_count: number; items: import('@/types').GitHubRepo[] }>(url, token);
 }
 
-/**
- * Search repos the account can actually access (owner + collaborator + org
- * member), by name. GitHub's `/search/repositories` `user:` qualifier only
- * matches repos you OWN, so it can never find a repo someone else created
- * and merely gave you push access to — this pulls from the same
- * affiliation-aware listing as listRepos() above and filters by name
- * ourselves instead, so search and browse behave consistently.
- *
- * Scans up to 500 accessible repos upstream (5 pages of 100) before
- * filtering; more than that and this endpoint won't be exhaustive — fine
- * for the personal/small-team scale this app targets, but a known limit.
- */
+//Search repos the account can actually access
 export async function searchAccessibleRepos(
   token: string,
   query: string,
@@ -222,7 +184,7 @@ export async function updateRepoName(
   );
 }
 
-// -------- Contents --------
+// Contents
 export async function getContents(token: string | undefined, owner: string, repo: string, path: string, ref?: string) {
   let url: string;
   if (path) {
@@ -284,7 +246,7 @@ export async function deleteFile(
   return res.json();
 }
 
-// -------- Branches --------
+// Branches
 export async function listBranches(token: string | undefined, owner: string, repo: string, page = 1, perPage = 100) {
   return ghFetch<import('@/types').GitHubBranch[]>(
     `${GITHUB_API}/repos/${owner}/${repo}/branches?per_page=${perPage}&page=${page}`,
@@ -332,9 +294,7 @@ export async function renameBranch(token: string | undefined, owner: string, rep
       },
     );
   } catch (err) {
-    // Only fall back for GitHub installations that do not expose the rename
-    // endpoint. Permission and validation errors must remain visible to the
-    // caller instead of becoming a second, misleading write attempt.
+    // Only fall back for GitHub installations that do not expose the rename endpoint.
     if (!(err instanceof Error && /GitHub API 404\b/.test(err.message))) {
       throw err;
     }
@@ -345,7 +305,7 @@ export async function renameBranch(token: string | undefined, owner: string, rep
   }
 }
 
-// -------- Merge --------
+//Merge
 export async function mergeBranches(
   token: string | undefined, owner: string, repo: string, base: string, head: string,
   commitMessage?: string,
@@ -362,18 +322,7 @@ export async function mergeBranches(
   };
 }
 
-// -------- Merge conflict detection & resolution (Git Data API) --------
-// GitHub's /merges endpoint (mergeBranches above) is all-or-nothing: it
-// either fast-forwards/auto-merges, or 409s with no detail about what
-// actually conflicts. The functions below reconstruct enough of a real
-// 3-way merge by hand — using compare() to find what each branch touched
-// since they diverged, and the low-level blob/tree/commit endpoints (the
-// same ones batchCommit above already uses) to build a genuine merge
-// commit with two parents once conflicts are resolved.
-
-/** Three-dot compare (`base...head`) already computes the merge base
- * internally and returns it — reuse that instead of a separate call. The
- * `files` list here is everything head changed since diverging from base. */
+// Merge conflict detection & resolution (Git Data API)
 async function compareBranches(
   token: string | undefined, owner: string, repo: string, base: string, head: string,
 ) {
@@ -383,17 +332,12 @@ async function compareBranches(
   }>(`${GITHUB_API}/repos/${owner}/${repo}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`, token);
 }
 
-/** Above this size, don't fetch/display content inline — same rationale as
- * INLINE_MAX_BYTES for pushes, but conservative since this content also has
- * to render in a textarea. */
+//above this size, don't fetch/display content inline
 const CONFLICT_CONTENT_MAX_BYTES = 512 * 1024;
 
 interface FileVersion { content: string | null; isBinary: boolean; tooLarge: boolean; }
 
-/** Fetch a file's content at a given ref via the Contents API. Returns
- * content: null (not binary/tooLarge) when the file doesn't exist at that
- * ref — i.e. it was deleted relative to whichever version we're comparing
- * against. */
+//Fetch a file's content at a given ref via the Contents API.
 async function getFileVersion(
   token: string | undefined, owner: string, repo: string, path: string, ref: string,
 ): Promise<FileVersion> {
@@ -412,13 +356,10 @@ async function getFileVersion(
   }
 
   if (Array.isArray(file)) {
-    // Path is a directory, not a file — shouldn't happen for a real
-    // conflict path, but guard against it rather than crash.
+    // Path is a directory, not a file — shouldn't happen for a real conflict path, but guard against it rather than crash.
     return { content: null, isBinary: false, tooLarge: false };
   }
   // Empty files are valid text files and can still be part of a conflict.
-  // Only treat missing content as unavailable (GitHub omits it for some
-  // responses), rather than using a falsy check that misclassifies "".
   if (file.size > CONFLICT_CONTENT_MAX_BYTES || file.content === undefined) {
     return { content: null, isBinary: false, tooLarge: true };
   }
@@ -447,8 +388,7 @@ export async function checkMergeConflicts(
     getBranchSha(token, owner, repo, head).then((r) => r.object.sha),
   ]);
 
-  // Each direction's compare gives that branch's own changes since the
-  // shared ancestor — exactly the two sides of a 3-way merge.
+  // Each direction's compare gives that branch's own changes since the shared ancestor — exactly the two sides of a 3-way merge.
   const [headSideCompare, baseSideCompare] = await Promise.all([
     compareBranches(token, owner, repo, base, head), // what head changed
     compareBranches(token, owner, repo, head, base), // what base changed
@@ -465,9 +405,7 @@ export async function checkMergeConflicts(
     else autoApplyPaths.push(path);
   }
 
-  // Fetch the three versions of every overlapping path in parallel (bounded)
-  // so a large diverging history doesn't serialize into dozens of
-  // round-trips.
+  // Fetch the three versions of every overlapping path in parallel 
   const CONTENT_FETCH_CONCURRENCY = 6;
   const conflicts: import('@/types').MergeConflictFile[] = [];
   await runWithConcurrency(overlapPaths, CONTENT_FETCH_CONCURRENCY, async (path) => {
@@ -477,10 +415,7 @@ export async function checkMergeConflicts(
       getFileVersion(token, owner, repo, path, headSha),
     ]);
 
-    // If both sides ended up with identical content (e.g. both merged in
-    // the same upstream change, or one side's edit is a no-op relative to
-    // the other), there's nothing to actually resolve — auto-apply it
-    // instead of bothering the user.
+    // If both sides ended up with identical content
     if (baseVer.content !== null && baseVer.content === headVer.content) {
       autoApplyPaths.push(path);
       return;
@@ -540,16 +475,7 @@ export async function resolveMergeConflicts(
 
   type TreeEntry = { path: string; mode: '100644'; type: 'blob'; sha: string | null };
 
-  // Auto-applied files: reference head's existing blob directly instead of
-  // re-uploading content we already know GitHub has — this is the same
-  // "skip the round-trip when possible" idea as tryInlineText in
-  // batchCommit, just via an existing blob sha instead of inline content.
-  //
-  // A 404 here means head *deleted* this path (it's an auto-apply path
-  // precisely because only head touched it) — that has to become an
-  // explicit deletion in the merge tree (sha: null), not just an omitted
-  // entry, or the file would silently survive by inheriting base_tree's
-  // untouched copy.
+  // Auto-applied files: reference head's existing blob directly instead of re-uploading content we already know GitHub has
   const AUTO_APPLY_CONCURRENCY = 6;
   const autoEntries = await runWithConcurrency(autoApplyPaths, AUTO_APPLY_CONCURRENCY, async (path): Promise<TreeEntry> => {
     const file = await ghFetch<import('@/types').GitHubContent | null>(
@@ -566,9 +492,7 @@ export async function resolveMergeConflicts(
     return { path, mode: '100644', type: 'blob', sha: file.sha };
   });
 
-  // Resolved conflicts: create a fresh blob for each resolution's content,
-  // or an explicit deletion entry when the user chose to resolve by
-  // removing the file.
+  // Resolved conflicts: create a fresh blob for each resolution's content
   const RESOLUTION_CONCURRENCY = 3; // content-creating writes — see batchCommit's note on abuse detection
   const resolutionEntries = await runWithConcurrency(resolutions, RESOLUTION_CONCURRENCY, async (r): Promise<TreeEntry> => {
     if (r.content === null) {
@@ -602,11 +526,7 @@ export async function resolveMergeConflicts(
       body: JSON.stringify({
         message,
         tree: tree.sha,
-        // A genuine merge commit — two parents, exactly like `git merge`
-        // produces locally. This is what makes GitHub (and any later
-        // `git log --graph`) recognize this as base's history absorbing
-        // head's changes, not just a regular commit that happens to look
-        // similar.
+        // A genuine merge commit
         parents: [baseSha, headSha],
       }),
     },
@@ -625,7 +545,7 @@ export async function resolveMergeConflicts(
   };
 }
 
-// -------- Commits --------
+//Commits
 export async function listCommits(
   token: string | undefined, owner: string, repo: string, sha?: string, page = 1, perPage = 30, path?: string,
 ) {
@@ -638,7 +558,7 @@ export async function listCommits(
   );
 }
 
-// -------- Compare --------
+// Compare
 export async function compareCommits(token: string | undefined, owner: string, repo: string, base: string, head: string) {
   return ghFetch<{
     status: string; ahead_by: number; behind_by: number; total_commits: number;
@@ -647,15 +567,10 @@ export async function compareCommits(token: string | undefined, owner: string, r
   }>(`${GITHUB_API}/repos/${owner}/${repo}/compare/${base}...${head}`, token);
 }
 
-// -------- Batch Commit (Git Trees API) --------
-// Creates a single commit with multiple file changes — equivalent to git add . && git commit && git push
-
+// Batch Commit (Git Trees API)
 interface BlobResult { sha: string; path: string; mode: string; type: string; }
 
-/**
- * Run async tasks with a bounded concurrency instead of either fully
- * sequential (slow) or fully parallel (can trip GitHub's abuse/rate limits).
- */
+//Run async tasks with a bounded concurrency
 async function runWithConcurrency<T, R>(
   items: T[],
   limit: number,
@@ -677,23 +592,10 @@ async function runWithConcurrency<T, R>(
   return results;
 }
 
-/** Above this size, don't bother inlining even if it's valid text — keeps
- * the /trees request body from being dominated by one large file. */
+//Above this size, don't bother inlining even if it's valid text
 const INLINE_MAX_BYTES = 512 * 1024;
 
-/**
- * Try to treat a file's content as safe-to-inline UTF-8 text. Returns the
- * decoded text if so, or null if it should go through the blob-creation API
- * instead (binary content, or too large to be worth inlining).
- *
- * Why this matters for speed: GitHub's Trees API lets a tree entry carry its
- * `content` directly instead of a blob `sha` — GitHub creates the blob for
- * you as part of the same request. For a typical push (mostly source code,
- * config, docs — all text), this means most files need ZERO separate blob
- * HTTP round-trips at all, which is the single biggest lever available for
- * push speed without touching the concurrency limits that keep us under
- * GitHub's abuse-detection radar.
- */
+//Try to treat a file's content as safe-to-inline UTF-8 text.
 function tryInlineText(file: { content: string; isBase64: boolean }): string | null {
   let buf: Buffer;
   try {
@@ -702,9 +604,7 @@ function tryInlineText(file: { content: string; isBase64: boolean }): string | n
     return null;
   }
   if (buf.length === 0 || buf.length > INLINE_MAX_BYTES) return null;
-  // A NUL byte is a strong binary signal that a "successful" UTF-8 decode
-  // alone won't always catch (some binary formats coincidentally decode as
-  // valid UTF-8).
+  // A NUL byte is a strong binary signal that a "successful" UTF-8 decode alone won't always catch
   if (buf.includes(0)) return null;
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(buf);
@@ -729,9 +629,7 @@ export async function batchCommit(
   );
   const baseTreeSha = ref.object.sha;
 
-  // 2. Split files into "inline" (small verified-text — no blob call
-  // needed) vs "blob" (binary, or too large to safely inline) groups. See
-  // tryInlineText above for the rationale.
+  // 2. Split files into "inline" (small verified-text
   const inlineEntries: Array<{ path: string; mode: string; type: string; content: string }> = [];
   const blobCandidates: typeof files = [];
   for (const file of files) {
@@ -745,20 +643,6 @@ export async function batchCommit(
   }
 
   // 3. Create blobs only for the files that couldn't be inlined.
-  // Blob creation is one HTTP round-trip per file — doing this strictly
-  // sequentially is what was causing pushes of more than a couple dozen
-  // files to be slow enough to fail (e.g. hit the serverless function's
-  // maxDuration). Upload with bounded concurrency instead: fast, but capped
-  // so we don't slam into GitHub's secondary rate limits on huge batches.
-  // Blob creation is a content-generating write endpoint, and GitHub's own
-  // API guidance specifically warns against concurrent requests to this
-  // class of endpoint — doing so risks their *secondary* rate limit (abuse
-  // detection), which is separate from and independent of the normal
-  // per-hour quota. 10 (and even the previous 6) was too aggressive and was
-  // tripping it. 3 is a safer balance of "still faster than fully serial"
-  // vs. "won't get flagged as abusive traffic." Combined with the
-  // retry/backoff in ghFetch above, an occasional secondary-limit hit now
-  // self-heals instead of failing the whole push.
   const BLOB_UPLOAD_CONCURRENCY = 3;
   const blobResults: BlobResult[] = await runWithConcurrency(blobCandidates, BLOB_UPLOAD_CONCURRENCY, async (file) => {
     const full = basePath ? `${basePath}/${file.path}` : file.path;
@@ -776,8 +660,7 @@ export async function batchCommit(
     return { sha: blob.sha, path: full, mode: '100644', type: 'blob' } as BlobResult;
   });
 
-  // 4. Create a new tree combining blob-referenced entries and inlined
-  // text-content entries.
+  // 4. Create a new tree combining blob-referenced entries and inlined text-content entries.
   const tree = await ghFetch<{ sha: string }>(
     `${GITHUB_API}/repos/${owner}/${repo}/git/trees`,
     token,
@@ -820,17 +703,13 @@ export async function batchCommit(
   return { sha: commit.sha, fileCount: blobResults.length + inlineEntries.length };
 }
 
-// -------- Archive (Pull / Clone) --------
+//Archive (Pull / Clone)
 // Returns the download URL for a repo archive (zip or tar.gz)
 export function getArchiveUrl(owner: string, repo: string, ref: string, format: 'zipball' | 'tarball' = 'zipball') {
   return `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${format}/${encodeURIComponent(ref)}`;
 }
 
-// -------- Changelog generator support --------
-// NOTE: these take (owner, repo, ...args, token) — matching the call sites in
-// the changelog/project API routes, which is the reverse of the (token, owner,
-// repo, ...) convention used elsewhere in this file.
-
+//Changelog generator support
 export async function validateRepo(owner: string, repo: string, token?: string) {
   return ghFetch<import('@/types').GitHubRepo>(`${GITHUB_API}/repos/${owner}/${repo}`, token);
 }

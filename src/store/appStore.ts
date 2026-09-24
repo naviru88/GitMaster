@@ -1,6 +1,4 @@
-/* ============================================================
-   Zustand Store — App State
-   ============================================================ */
+//Zustand Store — App State
 
 import { create } from 'zustand';
 import type {
@@ -61,7 +59,7 @@ interface AppState {
   loading: boolean;
   setLoading: (l: boolean) => void;
 
-  // ---- Changelog Projects feature (not yet wired into navigation) ----
+  //Changelog Projects feature (not yet wired into navigation)
   projects: Project[];
   setProjects: (p: Project[]) => void;
   addProject: (p: Project) => void;
@@ -215,7 +213,7 @@ export const useAppStore = create<AppState>((set) => ({
   loading: false,
   setLoading: (loading) => set({ loading }),
 
-  // ---- Changelog Projects feature (not yet wired into navigation) ----
+  //Changelog Projects feature (not yet wired into navigation)
   projects: [],
   setProjects: (projects) => set({ projects }),
   addProject: (p) => set((s) => ({ projects: [p, ...s.projects] })),
