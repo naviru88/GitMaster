@@ -83,3 +83,11 @@
     "typescript": "~5.9.3"
   }
 }
+
+"pnpm": {
+  "onlyBuiltDependencies": [
+    "@prisma/client",
+    "@prisma/engines",
+    "prisma"
+  ]
+}
