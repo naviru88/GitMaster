@@ -62,7 +62,7 @@ export default function BranchManager() {
   const [isRenaming, setIsRenaming] = useState(false);
 
   // Collaborator / push permissions check
-  const hasPushAccess = selectedRepo?.permissions ? selectedRepo.permissions.push : true;
+  const hasPushAccess = selectedRepo?.permissions?.push === true;
 
   const fetchBranches = useCallback(async () => {
     if (!selectedAccountId || !selectedRepo) return;

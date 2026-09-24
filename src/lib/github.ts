@@ -167,14 +167,11 @@ export async function createRepo(
 }
 
 export async function deleteRepo(token: string | undefined, owner: string, repo: string) {
-  const res = await fetch(`${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`, {
-    method: 'DELETE',
-    headers: headers(token),
-  });
-  if (!res.ok && res.status !== 204) {
-    const body = await res.text();
-    throw new Error(`GitHub API ${res.status}: ${body}`);
-  }
+  await ghFetch<void>(
+    `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
+    token,
+    { method: 'DELETE' },
+  );
 }
 
 export async function updateRepoVisibility(
@@ -335,7 +332,12 @@ export async function renameBranch(token: string | undefined, owner: string, rep
       },
     );
   } catch (err) {
-    // If the rename endpoint fails with 404 or unsupported, fallback to create ref + delete old ref
+    // Only fall back for GitHub installations that do not expose the rename
+    // endpoint. Permission and validation errors must remain visible to the
+    // caller instead of becoming a second, misleading write attempt.
+    if (!(err instanceof Error && /GitHub API 404\b/.test(err.message))) {
+      throw err;
+    }
     const shaRes = await getBranchSha(token, owner, repo, oldName);
     await createBranch(token, owner, repo, newName, shaRes.object.sha);
     await deleteBranch(token, owner, repo, oldName);

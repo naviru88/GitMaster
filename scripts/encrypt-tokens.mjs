@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client';
-import { createCipheriv, randomBytes } from 'crypto';
+import { createCipheriv, createHash, randomBytes } from 'crypto';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -12,15 +12,15 @@ const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12;
 const TAG_LENGTH = 16;
 
-const rawKey = process.env.ENCRYPTION_KEY;
-if (!rawKey) {
-  console.error('ERROR: ENCRYPTION_KEY environment variable is missing.');
-  process.exit(1);
-}
-
-const key = Buffer.from(rawKey, 'hex');
-if (key.length !== 32) {
-  console.error(`ERROR: ENCRYPTION_KEY must be a 32-byte hex string (64 hex characters). Got ${key.length} bytes.`);
+const rawKey = process.env.ENCRYPTION_KEY?.trim();
+const sessionSecret = process.env.SESSION_SECRET?.trim();
+const key = rawKey
+  ? Buffer.from(rawKey, 'hex')
+  : sessionSecret
+    ? createHash('sha256').update(`gitmaster-token-encryption:${sessionSecret}`).digest()
+    : null;
+if (!key || key.length !== 32 || (rawKey && !/^[0-9a-f]{64}$/i.test(rawKey))) {
+  console.error('ERROR: Set ENCRYPTION_KEY (64 hex characters) or SESSION_SECRET before migrating tokens.');
   process.exit(1);
 }
 

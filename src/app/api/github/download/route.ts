@@ -91,7 +91,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'No downloadable files found.' }, { status: 404 });
     }
     const archive = createTarGz(entries);
-    return new NextResponse(archive, {
+    return new NextResponse(new Uint8Array(archive), {
       headers: {
         'Content-Type': 'application/gzip',
         'Content-Disposition': `attachment; filename="${filename}"`,

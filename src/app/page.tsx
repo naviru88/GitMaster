@@ -26,8 +26,15 @@ export default function Home() {
 
   // Check session on mount
   useEffect(() => {
-    auth
-      .me()
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const authCheck = Promise.race([
+      auth.me(),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('Session check timed out')), 3000);
+      }),
+    ]);
+
+    authCheck
       .then((u) => {
         setUser(u);
         setAuthLoading(false);
@@ -35,6 +42,9 @@ export default function Home() {
       .catch(() => {
         setUser(null);
         setAuthLoading(false);
+      })
+      .finally(() => {
+        if (timeout) clearTimeout(timeout);
       });
   }, [setUser, setAuthLoading]);
 

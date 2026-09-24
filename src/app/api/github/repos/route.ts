@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { listRepos, searchAccessibleRepos, createRepo, deleteRepo, updateRepoVisibility, updateRepoDescription, updateRepoName } from '@/lib/github';
 import { requireAuth, AuthError } from '@/lib/auth';
 import { decrypt } from '@/lib/crypto';
+import { githubError } from '@/lib/errors';
 
 export async function GET(req: NextRequest) {
   try {
@@ -31,8 +32,8 @@ export async function GET(req: NextRequest) {
     if (err instanceof AuthError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }
-    const message = err instanceof Error ? err.message : 'Failed to fetch repos';
-    return NextResponse.json({ error: message }, { status: 500 });
+    const { message, status } = githubError(err);
+    return NextResponse.json({ error: message || 'Could not load repositories.' }, { status });
   }
 }
 
@@ -59,8 +60,8 @@ export async function DELETE(req: NextRequest) {
     if (err instanceof AuthError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }
-    const message = err instanceof Error ? err.message : 'Failed to delete repo';
-    return NextResponse.json({ error: message }, { status: 500 });
+    const { message, status } = githubError(err);
+    return NextResponse.json({ error: message || 'Could not delete the repository.' }, { status });
   }
 }
 
@@ -108,8 +109,8 @@ export async function PATCH(req: NextRequest) {
     if (err instanceof AuthError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }
-    const message = err instanceof Error ? err.message : 'Failed to update repository visibility';
-    return NextResponse.json({ error: message }, { status: 500 });
+    const { message, status } = githubError(err);
+    return NextResponse.json({ error: message || 'Could not update the repository.' }, { status });
   }
 }
 
@@ -148,7 +149,7 @@ export async function POST(req: NextRequest) {
     if (err instanceof AuthError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }
-    const message = err instanceof Error ? err.message : 'Failed to create/delete repo';
-    return NextResponse.json({ error: message }, { status: 500 });
+    const { message, status } = githubError(err);
+    return NextResponse.json({ error: message || 'Could not create the repository.' }, { status });
   }
 }

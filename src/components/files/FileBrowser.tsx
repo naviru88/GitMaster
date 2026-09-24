@@ -81,6 +81,7 @@ export default function FileBrowser() {
   const selectedAccountId = useAppStore((s) => s.selectedAccountId);
   const selectedRepo = useAppStore((s) => s.selectedRepo);
   const selectedBranch = useAppStore((s) => s.selectedBranch);
+  const hasPushAccess = selectedRepo?.permissions?.push === true;
   const filePath = useAppStore((s) => s.filePath);
   const setFilePath = useAppStore((s) => s.setFilePath);
   const fileContents = useAppStore((s) => s.fileContents);
@@ -265,7 +266,7 @@ export default function FileBrowser() {
           </BreadcrumbList>
         </Breadcrumb>
         <div className="flex items-center gap-2 shrink-0 flex-wrap">
-          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setPushOpen(true)}>
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setPushOpen(true)} disabled={!hasPushAccess}>
             <FolderUp className="size-3.5" />
             Push File / Folder
           </Button>
@@ -273,7 +274,7 @@ export default function FileBrowser() {
             <Download className="size-3.5" />
             Pull
           </Button>
-          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setNewFileOpen(true)}>
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setNewFileOpen(true)} disabled={!hasPushAccess}>
             <Plus className="size-3.5" />
             New File
           </Button>
@@ -338,7 +339,8 @@ export default function FileBrowser() {
                         : <Download className="size-3.5" />}
                     </button>
                     <button
-                      onClick={(e) => { e.stopPropagation(); setDeleteTarget(item); }}
+                       onClick={(e) => { e.stopPropagation(); setDeleteTarget(item); }}
+                       disabled={!hasPushAccess}
                       className="text-muted-foreground hover:text-destructive"
                       title={item.type === 'dir' ? 'Delete folder' : 'Delete file'}
                     >

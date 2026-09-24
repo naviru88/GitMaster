@@ -22,8 +22,8 @@ export async function GET(req: NextRequest) {
     if (err instanceof AuthError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }
-    const message = err instanceof Error ? err.message : 'Failed to load accounts';
-    return NextResponse.json({ error: message }, { status: 500 });
+    const { message, status } = githubError(err);
+    return NextResponse.json({ error: message || 'Could not load connected accounts.' }, { status });
   }
 }
 
@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
     if (err instanceof AuthError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }
-    const message = err instanceof Error ? err.message : 'Failed to add account';
-    return NextResponse.json({ error: message }, { status: 500 });
+    const { message, status } = githubError(err);
+    return NextResponse.json({ error: message || 'Could not add this GitHub account.' }, { status });
   }
 }

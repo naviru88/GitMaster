@@ -27,7 +27,18 @@ const BASE = '/api';
 async function handleResponse<T>(res: Response): Promise<T> {
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(body.error || body.message || `Request failed (${res.status})`);
+    const fallbackByStatus: Record<number, string> = {
+      400: 'Please check the values in the form and try again.',
+      401: 'Your session has expired. Please sign in again.',
+      403: 'You do not have permission to perform this action.',
+      404: 'The requested repository or resource could not be found.',
+      409: 'This action conflicts with a newer change. Refresh and try again.',
+      422: 'GitHub rejected the provided values. Please check them and try again.',
+      429: 'Too many requests. Please wait a moment and try again.',
+      500: 'The server could not complete the request. Please try again.',
+      502: 'GitHub is temporarily unavailable. Please try again shortly.',
+    };
+    throw new Error(body.error || body.message || fallbackByStatus[res.status] || 'The request could not be completed.');
   }
   return body as T;
 }

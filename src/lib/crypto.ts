@@ -11,27 +11,32 @@
    transition is safe and idempotent.
    ============================================================ */
 
-import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'crypto';
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12;   // 96-bit IV recommended for GCM
 const TAG_LENGTH = 16;  // 128-bit authentication tag
 
 function getKey(): Buffer {
-  const raw = process.env.ENCRYPTION_KEY;
-  if (!raw) {
-    throw new Error(
-      'ENCRYPTION_KEY environment variable is not set. ' +
-      'Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"',
-    );
+  const raw = process.env.ENCRYPTION_KEY?.trim();
+  if (raw) {
+    const key = Buffer.from(raw, 'hex');
+    if (key.length !== 32 || !/^[0-9a-f]{64}$/i.test(raw)) {
+      throw new Error('ENCRYPTION_KEY must be a 64-character hexadecimal string.');
+    }
+    return key;
   }
-  const key = Buffer.from(raw, 'hex');
-  if (key.length !== 32) {
-    throw new Error(
-      `ENCRYPTION_KEY must be a 64-character hex string (32 bytes). Got ${key.length} bytes.`,
-    );
+
+  // Keep the app usable with the existing deployment secret while allowing a
+  // dedicated key to be added later without changing the ciphertext format.
+  const sessionSecret = process.env.SESSION_SECRET?.trim();
+  if (sessionSecret) {
+    return createHash('sha256').update(`gitmaster-token-encryption:${sessionSecret}`).digest();
   }
-  return key;
+
+  throw new Error(
+    'Token encryption is not configured. Set ENCRYPTION_KEY or SESSION_SECRET before adding a GitHub account.',
+  );
 }
 
 /**
@@ -67,6 +72,9 @@ export function decrypt(value: string): string {
   }
 
   const [, ivHex, tagHex, cipherHex] = parts;
+  if (!/^[0-9a-f]{24}$/i.test(ivHex) || !/^[0-9a-f]{32}$/i.test(tagHex) || !/^[0-9a-f]+$/i.test(cipherHex)) {
+    throw new Error('Malformed encrypted token: invalid ciphertext.');
+  }
   const key = getKey();
   const iv = Buffer.from(ivHex, 'hex');
   const tag = Buffer.from(tagHex, 'hex');

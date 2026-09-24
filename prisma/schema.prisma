@@ -23,7 +23,7 @@ model Account {
   label      String                        // User-given label e.g. "Work", "Personal"
   username   String                        // GitHub username
   avatarUrl  String?
-  token      String                        // GitHub PAT (stored as-is for proxy)
+  token      String                        // AES-256-GCM encrypted GitHub PAT
   provider   String   @default("github")
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt

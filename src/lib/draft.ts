@@ -1,7 +1,7 @@
-import ZAI from 'z-ai-web-dev-sdk';
 import type { CategorizedChanges, Voice } from '@/types';
 import { buildDeveloperPrompt } from '@/lib/prompts/developer';
 import { buildMarketingPrompt } from '@/lib/prompts/marketing';
+import { generateText } from '@/lib/ai';
 
 interface ProjectInfo {
   name: string;
@@ -25,14 +25,9 @@ export async function generateDraft(
 
   const userMessage = `Generate the changelog markdown now.`;
 
-  const zai = await ZAI.create();
-  const completion = await zai.chat.completions.create({
-    messages: [
-      { role: 'assistant', content: systemPrompt },
-      { role: 'user', content: userMessage },
-    ],
-    thinking: { type: 'disabled' },
+  const generated = await generateText(`${systemPrompt}\n\n${userMessage}`, {
+    temperature: 0.4,
+    maxTokens: 2048,
   });
-
-  return completion.choices[0]?.message?.content || '';
+  return generated || `# ${projectInfo.name}\n\nNo changelog draft was generated. Review the categorized changes and try again.`;
 }
