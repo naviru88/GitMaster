@@ -70,7 +70,7 @@ export default function ReleaseNode({
   return (
     <div className="flex flex-col">
       <div
-        className={`border-l-4 ${LEVEL_BORDER[node.level]} pl-3 py-2 rounded-r-md hover:bg-accent/30 transition-colors`}
+        className={`group border-l-4 ${LEVEL_BORDER[node.level]} pl-3 py-2 rounded-r-md hover:bg-accent/30 transition-colors`}
         style={{ marginLeft: `${indentRem}rem` }}
       >
         {/* Header row */}
@@ -111,8 +111,8 @@ export default function ReleaseNode({
             </Badge>
           )}
 
-          {/* Actions — only on hover */}
-          <div className="ml-auto flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+          {/* Actions — faintly visible, fully visible on hover or keyboard focus */}
+          <div className="ml-auto flex items-center gap-0.5 opacity-40 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
