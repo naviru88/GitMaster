@@ -48,8 +48,9 @@ async function generateWithOpenAI(prompt: string, options: GenerateOptions): Pro
     body.max_tokens = options.maxTokens ?? 256;
   }
 
-  // Retry up to 2 times for empty/transient responses.
-  for (let attempt = 0; attempt < 2; attempt++) {
+  const MAX_ATTEMPTS = 3;
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const response = await fetch(`${cleanBaseUrl(baseUrl)}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -60,18 +61,43 @@ async function generateWithOpenAI(prompt: string, options: GenerateOptions): Pro
       body: JSON.stringify(body),
     });
 
+    // ERROR STATUSES
     if (!response.ok) {
+      // 401/403 — fatal, do not retry
       if (response.status === 401 || response.status === 403) {
         throw new Error('The configured AI provider rejected the API key.');
       }
+
+      // 429 — transient, backoff and retry
       if (response.status === 429) {
-        throw new Error('The configured AI provider is rate-limiting requests.');
+        if (attempt < MAX_ATTEMPTS - 1) {
+          const waitMs = 3000 * Math.pow(2, attempt); // 3s, 6s
+          console.warn(`[ai] Rate limited (429). Retrying in ${waitMs}ms (attempt ${attempt + 1}/${MAX_ATTEMPTS})...`);
+          await new Promise((r) => setTimeout(r, waitMs));
+          continue;
+        }
+        throw new Error('The configured AI provider is rate-limiting requests. Try again in a minute.');
       }
+
+      // 5xx — transient, backoff and retry
+      if (response.status >= 500) {
+        if (attempt < MAX_ATTEMPTS - 1) {
+          const waitMs = 2000 * Math.pow(2, attempt); // 2s, 4s
+          console.warn(`[ai] Provider error ${response.status}. Retrying in ${waitMs}ms (attempt ${attempt + 1}/${MAX_ATTEMPTS})...`);
+          await new Promise((r) => setTimeout(r, waitMs));
+          continue;
+        }
+        throw new Error(`The configured AI provider returned HTTP ${response.status}.`);
+      }
+
+      // 400/402/404 etc. — fatal, do not retry
       throw new Error(`The configured AI provider returned HTTP ${response.status}.`);
     }
 
+    // SUCCESS: inspect body
     const data = await response.json();
     const msg = data?.choices?.[0]?.message;
+    const finishReason = data?.choices?.[0]?.finish_reason;
 
     // Prefer standard content; fall back to reasoning_content for reasoning models.
     const text = msg?.content || msg?.reasoning_content;
@@ -79,13 +105,17 @@ async function generateWithOpenAI(prompt: string, options: GenerateOptions): Pro
       return text.trim();
     }
 
+    // Empty response — log and retry
     console.warn(
-      `[ai] Empty response on attempt ${attempt + 1} (model: ${model}, ` +
-      `max_tokens: ${body.max_tokens ?? 'unset'}). Body:`,
-      JSON.stringify(data).slice(0, 500),
+      `[ai] Empty response on attempt ${attempt + 1}/${MAX_ATTEMPTS} ` +
+      `(model: ${model}, max_tokens: ${body.max_tokens ?? 'unset'}, finish_reason: ${finishReason ?? 'n/a'}). ` +
+      `Body: ${JSON.stringify(data).slice(0, 500)}`,
     );
 
-    if (attempt === 0) continue;
+    if (attempt < MAX_ATTEMPTS - 1) {
+      await new Promise((r) => setTimeout(r, 1500));
+      continue;
+    }
   }
 
   throw new Error('The configured AI provider returned an empty response after retry.');
