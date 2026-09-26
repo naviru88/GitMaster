@@ -7,6 +7,21 @@ function cleanBaseUrl(value: string): string {
   return value.replace(/\/+$/, '');
 }
 
+// Models that consume all tokens on internal reasoning and return an empty
+// `content` field when a max_tokens cap is applied. For these, omit the cap.
+const REASONING_MODELS = [
+  'north-mini-code',
+  'gpt-oss',
+  'deepseek-r1',
+  'deepseek-reasoner',
+  'qwen3-coder',
+  'nemotron',
+];
+
+function needsUnlimitedTokens(model: string): boolean {
+  return REASONING_MODELS.some((m) => model.includes(m));
+}
+
 async function generateWithOpenAI(prompt: string, options: GenerateOptions): Promise<string | null> {
   const managedBaseUrl = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
   const userApiKey = process.env.OPENAI_API_KEY;
@@ -22,7 +37,18 @@ async function generateWithOpenAI(prompt: string, options: GenerateOptions): Pro
   const model = process.env.AI_INTEGRATIONS_OPENAI_MODEL
     || (isOpenRouterKey ? 'openai/gpt-4o-mini' : 'gpt-4o-mini');
 
-  // Retry up to 2 times for empty/transient responses
+  const body: Record<string, unknown> = {
+    model,
+    messages: [{ role: 'user', content: prompt }],
+    temperature: options.temperature ?? 0.3,
+  };
+
+  // Only set max_tokens if the model handles it correctly.
+  if (!needsUnlimitedTokens(model)) {
+    body.max_tokens = options.maxTokens ?? 256;
+  }
+
+  // Retry up to 2 times for empty/transient responses.
   for (let attempt = 0; attempt < 2; attempt++) {
     const response = await fetch(`${cleanBaseUrl(baseUrl)}/chat/completions`, {
       method: 'POST',
@@ -31,12 +57,7 @@ async function generateWithOpenAI(prompt: string, options: GenerateOptions): Pro
         'Content-Type': 'application/json',
         ...(isOpenRouterKey ? { 'HTTP-Referer': 'https://replit.com', 'X-Title': 'GitMaster' } : {}),
       },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: options.temperature ?? 0.3,
-        max_tokens: options.maxTokens ?? 256,
-      }),
+      body: JSON.stringify(body),
     });
 
     if (!response.ok) {
@@ -49,20 +70,21 @@ async function generateWithOpenAI(prompt: string, options: GenerateOptions): Pro
       throw new Error(`The configured AI provider returned HTTP ${response.status}.`);
     }
 
-    const body = await response.json();
-    const msg = body?.choices?.[0]?.message;
+    const data = await response.json();
+    const msg = data?.choices?.[0]?.message;
 
-    // Standard content, then reasoning fallback (DeepSeek / reasoning models)
+    // Prefer standard content; fall back to reasoning_content for reasoning models.
     const text = msg?.content || msg?.reasoning_content;
     if (typeof text === 'string' && text.trim()) {
       return text.trim();
     }
 
-    // Empty response — log and retry once
     console.warn(
-      `[ai] Empty response on attempt ${attempt + 1} (model: ${model}). Body:`,
-      JSON.stringify(body).slice(0, 500),
+      `[ai] Empty response on attempt ${attempt + 1} (model: ${model}, ` +
+      `max_tokens: ${body.max_tokens ?? 'unset'}). Body:`,
+      JSON.stringify(data).slice(0, 500),
     );
+
     if (attempt === 0) continue;
   }
 
@@ -98,8 +120,8 @@ async function generateWithGemini(prompt: string, options: GenerateOptions): Pro
     throw new Error(`Gemini returned HTTP ${response.status}.`);
   }
 
-  const body = await response.json();
-  const text = body?.candidates?.[0]?.content?.parts?.[0]?.text;
+  const data = await response.json();
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
   if (typeof text !== 'string' || !text.trim()) {
     throw new Error('The configured AI provider returned an empty response.');
   }
@@ -107,8 +129,6 @@ async function generateWithGemini(prompt: string, options: GenerateOptions): Pro
 }
 
 export async function generateText(prompt: string, options: GenerateOptions = {}): Promise<string | null> {
-  // Prefer the managed OpenAI integration, while retaining compatibility with
-  // existing Gemini deployments that already have a user-owned key.
   const managedResult = await generateWithOpenAI(prompt, options);
   if (managedResult) return managedResult;
   return generateWithGemini(prompt, options);
