@@ -46,8 +46,11 @@ async function generateWithOpenAI(prompt: string, options: GenerateOptions): Pro
   }
 
   const body = await response.json();
-  const text = body?.choices?.[0]?.message?.content;
+  const msg = body?.choices?.[0]?.message;
+  const text = msg?.content || msg?.reasoning;
   if (typeof text !== 'string' || !text.trim()) {
+    // Log for debugging
+    console.error('[ai] empty response body:', JSON.stringify(body).slice(0, 500));
     throw new Error('The configured AI provider returned an empty response.');
   }
   return text.trim();
