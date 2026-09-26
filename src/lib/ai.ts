@@ -19,41 +19,54 @@ async function generateWithOpenAI(prompt: string, options: GenerateOptions): Pro
   );
   if (!baseUrl || !apiKey) return null;
 
-  const response = await fetch(`${cleanBaseUrl(baseUrl)}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      ...(isOpenRouterKey ? { 'HTTP-Referer': 'https://replit.com', 'X-Title': 'GitMaster' } : {}),
-    },
-    body: JSON.stringify({
-      model: process.env.AI_INTEGRATIONS_OPENAI_MODEL
-        || (isOpenRouterKey ? 'openai/gpt-4o-mini' : 'gpt-4o-mini'),
-      messages: [{ role: 'user', content: prompt }],
-      temperature: options.temperature ?? 0.3,
-      max_tokens: options.maxTokens ?? 2048,
-    }),
-  });
+  const model = process.env.AI_INTEGRATIONS_OPENAI_MODEL
+    || (isOpenRouterKey ? 'openai/gpt-4o-mini' : 'gpt-4o-mini');
 
-  if (!response.ok) {
-    if (response.status === 401 || response.status === 403) {
-      throw new Error('The configured AI provider rejected the API key.');
+  // Retry up to 2 times for empty/transient responses
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const response = await fetch(`${cleanBaseUrl(baseUrl)}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        ...(isOpenRouterKey ? { 'HTTP-Referer': 'https://replit.com', 'X-Title': 'GitMaster' } : {}),
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: options.temperature ?? 0.3,
+        max_tokens: options.maxTokens ?? 2048,
+      }),
+    });
+
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        throw new Error('The configured AI provider rejected the API key.');
+      }
+      if (response.status === 429) {
+        throw new Error('The configured AI provider is rate-limiting requests.');
+      }
+      throw new Error(`The configured AI provider returned HTTP ${response.status}.`);
     }
-    if (response.status === 429) {
-      throw new Error('The configured AI provider is rate-limiting requests.');
+
+    const body = await response.json();
+    const msg = body?.choices?.[0]?.message;
+
+    // Standard content, then reasoning fallback (DeepSeek / reasoning models)
+    const text = msg?.content || msg?.reasoning_content;
+    if (typeof text === 'string' && text.trim()) {
+      return text.trim();
     }
-    throw new Error(`The configured AI provider returned HTTP ${response.status}.`);
+
+    // Empty response — log and retry once
+    console.warn(
+      `[ai] Empty response on attempt ${attempt + 1} (model: ${model}). Body:`,
+      JSON.stringify(body).slice(0, 500),
+    );
+    if (attempt === 0) continue;
   }
 
-  const body = await response.json();
-  const msg = body?.choices?.[0]?.message;
-  const text = msg?.content || msg?.reasoning;
-  if (typeof text !== 'string' || !text.trim()) {
-    // Log for debugging
-    console.error('[ai] empty response body:', JSON.stringify(body).slice(0, 500));
-    throw new Error('The configured AI provider returned an empty response.');
-  }
-  return text.trim();
+  throw new Error('The configured AI provider returned an empty response after retry.');
 }
 
 async function generateWithGemini(prompt: string, options: GenerateOptions): Promise<string | null> {
