@@ -35,7 +35,7 @@ async function generateWithOpenAI(prompt: string, options: GenerateOptions): Pro
         model,
         messages: [{ role: 'user', content: prompt }],
         temperature: options.temperature ?? 0.3,
-        max_tokens: options.maxTokens ?? 2048,
+        max_tokens: options.maxTokens ?? 256,
       }),
     });
 
