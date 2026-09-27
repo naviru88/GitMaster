@@ -19,6 +19,7 @@ import {
   ChevronRight,
   ArrowLeft,
   HardDrive,
+  FolderTree,
 } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 import { github } from '@/services/api';
@@ -49,6 +50,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
+import FolderPicker from './FolderPicker';
 
 interface PushFolderDialogProps {
   open: boolean;
@@ -66,17 +68,15 @@ interface FileItem {
 /** GitHub's own ceiling for a single blob via the Git Data API. */
 const GITHUB_MAX_FILE_BYTES = 100 * 1024 * 1024;
 
-//Ignore Git folder
 function isBlockedGitPath(path: string): boolean {
   return path.split('/').some((seg) => seg.toLowerCase() === '.git');
 }
 
-//Read a File as base64 via the browser's native FileReader/
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
-      const result = reader.result as string; // "data:<mime>;base64,XXXX"
+      const result = reader.result as string;
       const commaIdx = result.indexOf(',');
       resolve(commaIdx >= 0 ? result.slice(commaIdx + 1) : result);
     };
@@ -86,7 +86,6 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
-//Run async work with bounded concurrency.
 async function runWithConcurrency<T>(
   items: T[],
   limit: number,
@@ -104,17 +103,14 @@ async function runWithConcurrency<T>(
   await Promise.all(workers);
 }
 
-/** Yield to the event loop so the UI doesn't freeze */
 function yieldToMain(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-/** Read a FileSystemFileEntry as a File */
 function readEntryAsFile(entry: FileSystemFileEntry): Promise<File> {
   return new Promise((resolve, reject) => entry.file(resolve, reject));
 }
 
-//Read a FileSystemFileEntry directly as text
 function readEntryAsText(entry: FileSystemFileEntry): Promise<string> {
   return new Promise((resolve, reject) => {
     entry.file((file) => {
@@ -126,12 +122,10 @@ function readEntryAsText(entry: FileSystemFileEntry): Promise<string> {
   });
 }
 
-//FileSystemDirectoryReader.
 function readDirectoryEntries(reader: FileSystemDirectoryReader): Promise<FileSystemEntry[]> {
   return new Promise((resolve, reject) => reader.readEntries(resolve, reject));
 }
 
-// gitignore detection
 async function findRootGitignoreContent(entries: FileSystemEntry[]): Promise<string | null> {
   for (const entry of entries) {
     if (entry.isFile && entry.name === '.gitignore') {
@@ -153,7 +147,6 @@ async function findRootGitignoreContent(entries: FileSystemEntry[]): Promise<str
   return null;
 }
 
-// Recursively walk a dropped FileSystemEntry (file or directory) and push every file found into `collected`.
 async function collectFilesFromEntry(
   entry: FileSystemEntry,
   collected: FileItem[],
@@ -169,7 +162,6 @@ async function collectFilesFromEntry(
   } else if (entry.isDirectory) {
     const relPath = (entry.fullPath || `/${entry.name}`).replace(/^\//, '');
 
-    // Hard block: never descend into a .git directory.
     if (isBlockedGitPath(relPath)) {
       onDirPruned?.(relPath);
       return;
@@ -182,7 +174,6 @@ async function collectFilesFromEntry(
 
     const reader = (entry as FileSystemDirectoryEntry).createReader();
     let entries: FileSystemEntry[] = [];
-    // Keep calling readEntries until it returns [] — a single call is not guaranteed to return the full directory listing.
     while (true) {
       const batch = await readDirectoryEntries(reader);
       if (batch.length === 0) break;
@@ -204,55 +195,49 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
 
   const gitignoreFileRef = useRef<HTMLInputElement>(null);
 
-  // Wizard step
   const [step, setStep] = useState<Step>('message');
 
-  // File state
   const [rawFiles, setRawFiles] = useState<FileItem[]>([]);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const [scanningCount, setScanningCount] = useState<number | null>(null);
   const [prunedDirs, setPrunedDirs] = useState<string[]>([]);
   const [commitMessage, setCommitMessage] = useState('');
 
-  // Incremental processing state
   const [processingQueue, setProcessingQueue] = useState(0);
   const [processingDone, setProcessingDone] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingError, setProcessingError] = useState<string | null>(null);
-  const fileCacheRef = useRef<Map<string, string>>(new Map()); // path -> base64
-  // Counter to force re-render when cache is updated
+  const fileCacheRef = useRef<Map<string, string>>(new Map());
   const [cacheVersion, setCacheVersion] = useState(0);
-  // ID to cancel stale processing runs
   const processingIdRef = useRef(0);
 
-  // Push state
   const [pushing, setPushing] = useState(false);
   const [pushProgress, setPushProgress] = useState(0);
 
-  // Gitignore state
   const [gitignoreEnabled, setGitignoreEnabled] = useState(true);
   const [gitignoreSource, setGitignoreSource] = useState<'none' | 'auto' | 'manual'>('none');
   const [gitignoreContent, setGitignoreContent] = useState(DEFAULT_GITIGNORE_PATTERNS);
   const [showExcluded, setShowExcluded] = useState(false);
   const [forceIncludes, setForceIncludes] = useState<Set<string>>(new Set());
 
-  // Failsafe: files that failed to read/encode, or that are too large for GitHub's blob API. Tracked separately from .gitignore exclusion
   const [invalidFiles, setInvalidFiles] = useState<Map<string, string>>(new Map());
 
-  // Stable helper
+  const [destinationFolder, setDestinationFolder] = useState<string | null>(null);
+  const [folderPickerOpen, setFolderPickerOpen] = useState(false);
+
+  const resolvedDestination = destinationFolder ?? filePath;
+
   const getRelativePath = useCallback((item: FileItem) => {
     return item.relativePath.includes('/')
       ? item.relativePath.split('/').slice(1).join('/')
       : item.relativePath;
   }, []);
 
-  // Apply gitignore filtering
   const { included, excluded } = useMemo(() => {
     if (rawFiles.length === 0) {
       return { included: [] as FileItem[], excluded: [] as FileItem[] };
     }
 
-    // Hard block for .git/ paths
     const gitBlocked = new Set(
       rawFiles.map((f) => getRelativePath(f)).filter(isBlockedGitPath),
     );
@@ -285,13 +270,11 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
     };
   }, [rawFiles, gitignoreEnabled, gitignoreContent, forceIncludes, getRelativePath]);
 
-  // Files that pass .gitignore filtering AND are actually readable/valid.
   const pushable = useMemo(
     () => included.filter((f) => !invalidFiles.has(getRelativePath(f))),
     [included, invalidFiles, getRelativePath],
   );
 
-  // Cache stats - force recompute via cacheVersion
   const cachedCount = useMemo(() => {
     let count = 0;
     for (const f of pushable) {
@@ -302,7 +285,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
 
   const allCached = cachedCount === pushable.length && pushable.length > 0;
 
-  // Auto-detect .gitignore in selected files
   useEffect(() => {
     if (rawFiles.length === 0) return;
     const giFile = rawFiles.find(
@@ -319,7 +301,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
     }
   }, [rawFiles]);
 
-  // Incremental file processing
   useEffect(() => {
     if (included.length === 0) return;
 
@@ -336,7 +317,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
 
       const newlyInvalid = new Map<string, string>();
 
-      // CONCURRENCY: read/encode multiple files at once instead of one at a time.
       const READ_CONCURRENCY = 8;
 
       await runWithConcurrency(included, READ_CONCURRENCY, async (f) => {
@@ -344,14 +324,12 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
 
         const rp = getRelativePath(f);
 
-        // Skip if already cached
         if (fileCacheRef.current.has(rp)) {
           doneCount++;
           setProcessingDone(doneCount);
           return;
         }
 
-        // FAILSAFE 1: reject files GitHub's blob API can't accept.
         if (f.size > GITHUB_MAX_FILE_BYTES) {
           newlyInvalid.set(rp, `Too large (${(f.size / 1024 / 1024).toFixed(1)}MB) — GitHub's limit is 100MB per file`);
           doneCount++;
@@ -359,7 +337,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
           return;
         }
 
-        // FAILSAFE 2: a corrupted/unreadable/permission-denied file is caught and skipped here.
         try {
           const base64 = await fileToBase64(f.file);
           if (cancelled || processingIdRef.current !== myId) return;
@@ -387,7 +364,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
       setIsProcessing(false);
     };
 
-    // Clean stale cache/invalid entries
     const currentPaths = new Set(included.map((f) => getRelativePath(f)));
     let hadCleanup = false;
     for (const key of fileCacheRef.current.keys()) {
@@ -416,7 +392,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
     };
   }, [included, getRelativePath]);
 
-  // Immediate confirmation the instant a selection registers.
   const notifySelection = (count: number) => {
     if (count > 500) {
       toast.info(`${count} files selected — this may take a bit to read and cache before pushing.`);
@@ -437,7 +412,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
     setRawFiles(items);
     setForceIncludes(new Set());
     setInvalidFiles(new Map());
-    // A native picker replaces the whole selection with an already-flat list
     setPrunedDirs([]);
     notifySelection(items.length);
     e.target.value = '';
@@ -459,7 +433,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
     e.target.value = '';
   };
 
-  // Drag & drop (bypasses the native file picker) 
   const dragCounterRef = useRef(0);
 
   const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
@@ -472,7 +445,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
   }, [isProcessing, pushing]);
 
   const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    // preventDefault is required here, or the browser will refuse the drop
     e.preventDefault();
     e.stopPropagation();
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
@@ -496,14 +468,12 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
     const collected: FileItem[] = [];
     const prunedThisDrop: string[] = [];
 
-    // Immediate feedback the moment the drop is registered
     setScanningCount(0);
     let lastToastUpdate = 0;
 
     try {
       const items = dt.items;
       if (items && items.length > 0 && typeof items[0]?.webkitGetAsEntry === 'function') {
-        // Modern path (Chrome/Brave/Firefox)
         const entries: FileSystemEntry[] = [];
         for (let i = 0; i < items.length; i++) {
           const item = items[i];
@@ -512,7 +482,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
           if (entry) entries.push(entry);
         }
 
-        // Look for a project .gitignore *before* the real walk starts
         let patterns: Pattern[] | null = null;
         if (gitignoreEnabled) {
           let effectiveContent = gitignoreContent;
@@ -536,7 +505,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
             patterns,
             (dirPath) => prunedThisDrop.push(dirPath),
             () => {
-              // Batch state updates roughly every 20 files instead of on every single one
               if (collected.length - lastToastUpdate >= 20) {
                 lastToastUpdate = collected.length;
                 setScanningCount(collected.length);
@@ -546,7 +514,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
         }
       }
 
-      // Fallback: flat file list only (no folder structure)
       if (collected.length === 0 && dt.files && dt.files.length > 0) {
         for (let i = 0; i < dt.files.length; i++) {
           const f = dt.files[i];
@@ -573,7 +540,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
       toast.success(`Found ${collected.length} file(s)${prunedNote} — reading and caching now…`);
     }
 
-    // Merge into the existing selection: dropping more files/folders adds to what's already selected.
     setRawFiles((prev) => {
       const map = new Map(prev.map((f) => [f.relativePath, f]));
       for (const f of collected) map.set(f.relativePath, f);
@@ -625,13 +591,11 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
     setPushing(true);
     setPushProgress(0);
 
-    // A single evolving toast (loading → success/error)
     const toastId = toast.loading(`Preparing ${pushable.length} file(s)…`, {
       description: 'Reading and encoding files before upload.',
     });
 
     try {
-      // All files should already be cached from incremental processing
       const fileData: Array<{ path: string; content: string; isBase64: boolean }> = [];
       for (let i = 0; i < pushable.length; i++) {
         const f = pushable[i];
@@ -640,7 +604,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
         if (cached) {
           fileData.push({ path: rp, content: cached, isBase64: true });
         } else {
-          // Fallback
           try {
             const base64 = await fileToBase64(f.file);
             fileData.push({ path: rp, content: base64, isBase64: true });
@@ -649,7 +612,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
           }
         }
         setPushProgress(Math.round(((i + 1) / pushable.length) * 90));
-        // Don't spam the toast with a re-render on every single file
         if (i % 10 === 0 || i === pushable.length - 1) {
           toast.loading(`Preparing files… (${i + 1}/${pushable.length})`, { id: toastId });
         }
@@ -675,7 +637,7 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
         branch,
         fileData,
         msg,
-        filePath || undefined,
+        resolvedDestination || undefined,
       );
 
       setPushProgress(100);
@@ -718,6 +680,8 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
     setProcessingError(null);
     setIsProcessing(false);
     setCacheVersion(0);
+    setDestinationFolder(null);
+    setFolderPickerOpen(false);
     fileCacheRef.current.clear();
   };
 
@@ -748,7 +712,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
       open={open}
       onOpenChange={(v) => {
         if (!v && pushing) {
-          // Prevent the dialog (and its close-guarded toast) from vanishing mid-upload
           toast.info('Push in progress — please wait for it to finish.');
           return;
         }
@@ -765,15 +728,9 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
           <DialogDescription>
             <span className="text-xs text-muted-foreground">
               Branch: <code className="rounded bg-muted px-1 font-mono">{selectedBranch || selectedRepo?.default_branch}</code>
-              {filePath && (
-                <span>
-                  {' '}· Path: <code className="rounded bg-muted px-1 font-mono">{filePath}</code>
-                </span>
-              )}
             </span>
           </DialogDescription>
 
-          {/* Step indicator */}
           <div className="flex items-center gap-1 mt-3">
             {stepOrder.map((s, i) => {
               const isActive = step === s;
@@ -803,7 +760,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
           </div>
         </DialogHeader>
 
-        {/* Upload progress */}
         {pushing && (
           <div className="shrink-0 flex flex-col gap-1.5 rounded-lg border bg-muted/40 px-3 py-2.5">
             <div className="flex items-center justify-between text-sm font-medium">
@@ -818,7 +774,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
         )}
 
         <div className="flex flex-col gap-4 overflow-y-auto flex-1 min-h-0">
-          {/* STEP 1: Commit Message */}
           {step === 'message' && (
             <div className="flex flex-col gap-3 py-2">
               <div className="flex flex-col gap-2">
@@ -837,7 +792,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
             </div>
           )}
 
-          {/*STEP 2: Select Files*/}
           {step === 'files' && (
             <div
               className="flex flex-col gap-4 py-2 relative"
@@ -846,7 +800,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
             >
-              {/* Drag-and-drop overlay */}
               {isDraggingOver && (
                 <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-primary bg-primary/5 backdrop-blur-[1px] pointer-events-none">
                   <UploadCloud className="size-8 text-primary" />
@@ -854,7 +807,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                 </div>
               )}
 
-              {/* Live folder-scan progress*/}
               {scanningCount !== null && (
                 <div className="flex items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2.5 text-sm">
                   <Loader2 className="size-4 animate-spin text-primary shrink-0" />
@@ -862,7 +814,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                 </div>
               )}
 
-              {/* Directories skipped entirely during the drag-and-drop scan */}
               {scanningCount === null && prunedDirs.length > 0 && (
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -880,7 +831,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                 </Tooltip>
               )}
 
-              {/* File selection buttons */}
               <div className="flex gap-2">
                 <label className="flex-1">
                   <input
@@ -919,7 +869,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                 </div>
               )}
 
-              {/* Processing progress */}
               {(isProcessing || (processingDone > 0 && processingDone < processingQueue)) && (
                 <div className="flex flex-col gap-1.5">
                   <div className="flex items-center justify-between text-xs text-muted-foreground">
@@ -933,7 +882,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                 </div>
               )}
 
-              {/* Processing complete notification */}
               {!isProcessing && processingDone > 0 && processingDone >= processingQueue && !processingError && (
                 <div className="flex items-center gap-2 text-xs text-green-600">
                   <Check className="size-3.5" />
@@ -941,7 +889,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                 </div>
               )}
 
-              {/* Processing error */}
               {processingError && (
                 <div className="flex items-center gap-2 text-xs text-destructive">
                   <FileX2 className="size-3.5" />
@@ -949,7 +896,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                 </div>
               )}
 
-              {/* .gitignore section */}
               {rawFiles.length > 0 && (
                 <div className="border rounded-lg p-3">
                   <div className="flex items-center justify-between mb-2">
@@ -1023,7 +969,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                         </button>
                       </div>
 
-                      {/* Excluded files list */}
                       {showExcluded && (
                         <ScrollArea className="max-h-28 mb-2">
                           <div className="divide-y rounded border bg-destructive/5">
@@ -1081,7 +1026,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                     </>
                   )}
 
-                  {/* Editable gitignore content*/}
                   {gitignoreEnabled && gitignoreSource !== 'none' && (
                     <Collapsible>
                       <CollapsibleTrigger asChild>
@@ -1130,7 +1074,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                 </div>
               )}
 
-              {/* Included file list */}
               {included.length > 0 && (
                 <div className="border rounded-lg overflow-hidden">
                   <div className="flex items-center justify-between px-3 py-2 bg-muted/50 border-b text-xs text-muted-foreground">
@@ -1184,7 +1127,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                 </div>
               )}
 
-              {/* No files left to push after filtering + invalid-file exclusion */}
               {rawFiles.length > 0 && pushable.length === 0 && (
                 <div className="border rounded-lg p-4 text-center">
                   <FileX2 className="size-8 mx-auto text-orange-500 mb-2" />
@@ -1203,10 +1145,8 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
             </div>
           )}
 
-          {/* STEP 3: Review & Push */}
           {step === 'review' && (
             <div className="flex flex-col gap-4 py-2">
-              {/* Summary card */}
               <div className="border rounded-lg p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium">Commit Message</span>
@@ -1221,15 +1161,26 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                     {selectedBranch || selectedRepo?.default_branch}
                   </code>
                 </div>
-                {filePath && (
-                  <>
-                    <div className="h-px bg-border" />
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium">Path Prefix</span>
-                      <code className="text-xs bg-muted rounded px-2 py-0.5">{filePath}</code>
-                    </div>
-                  </>
-                )}
+                <div className="h-px bg-border" />
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-medium">Destination</span>
+                  <div className="flex items-center gap-2">
+                    <code className="text-xs bg-muted rounded px-2 py-0.5 max-w-[220px] truncate block">
+                      {resolvedDestination ? `/${resolvedDestination}` : '/ (root)'}
+                    </code>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-6 px-2 text-xs gap-1"
+                      onClick={() => setFolderPickerOpen(true)}
+                      disabled={pushing}
+                    >
+                      <FolderTree className="size-3" />
+                      Change
+                    </Button>
+                  </div>
+                </div>
                 <div className="h-px bg-border" />
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium">Files</span>
@@ -1255,7 +1206,6 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
                 </div>
               </div>
 
-              {/* File list */}
               <div className="border rounded-lg overflow-hidden">
                 <div className="px-3 py-2 bg-muted/50 border-b text-xs text-muted-foreground font-medium flex items-center justify-between">
                   <span>Files to push</span>
@@ -1349,6 +1299,36 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
           )}
         </DialogFooter>
       </DialogContent>
+
+      <Dialog open={folderPickerOpen} onOpenChange={setFolderPickerOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FolderTree className="size-4" />
+              Choose destination folder
+            </DialogTitle>
+            <DialogDescription>
+              Files will be pushed inside the selected folder.
+            </DialogDescription>
+          </DialogHeader>
+          <FolderPicker
+            accountId={selectedAccountId || ''}
+            owner={selectedRepo?.owner.login || ''}
+            repo={selectedRepo?.name || ''}
+            branch={selectedBranch || undefined}
+            selected={resolvedDestination}
+            onSelect={(path) => {
+              setDestinationFolder(path);
+              setFolderPickerOpen(false);
+            }}
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFolderPickerOpen(false)}>
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Dialog>
   );
 }
