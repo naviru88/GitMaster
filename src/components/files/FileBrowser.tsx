@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
   Folder,
@@ -13,11 +13,14 @@ import {
   Download,
   Trash2,
   Loader2,
+  Search,
+  X,
 } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 import { github } from '@/services/api';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Input } from '@/components/ui/input';
 import PushFolderDialog from './PushFolderDialog';
 import PullDialog from './PullDialog';
 import {
@@ -53,7 +56,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type { GitHubContent } from '@/types';
 
@@ -77,6 +79,12 @@ function getFileIcon(name: string) {
   return <File className="size-4 text-muted-foreground" />;
 }
 
+interface TreeEntry {
+  path: string;
+  type: 'blob' | 'tree';
+  size?: number;
+}
+
 export default function FileBrowser() {
   const selectedAccountId = useAppStore((s) => s.selectedAccountId);
   const selectedRepo = useAppStore((s) => s.selectedRepo);
@@ -97,6 +105,13 @@ export default function FileBrowser() {
   const [deleting, setDeleting] = useState(false);
   const [deleteProgress, setDeleteProgress] = useState<{ done: number; total: number } | null>(null);
   const [downloadingPath, setDownloadingPath] = useState<string | null>(null);
+
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [tree, setTree] = useState<TreeEntry[]>([]);
+  const [treeLoading, setTreeLoading] = useState(false);
+  const [treeLoadedFor, setTreeLoadedFor] = useState<string | null>(null);
+  const searchContainerRef = useRef<HTMLDivElement>(null);
 
   const fetchContents = useCallback(async (path: string) => {
     if (!selectedAccountId || !selectedRepo) return;
@@ -121,6 +136,93 @@ export default function FileBrowser() {
   useEffect(() => {
     fetchContents(filePath);
   }, [filePath, fetchContents]);
+
+  const loadTree = useCallback(async () => {
+    if (!selectedAccountId || !selectedRepo) return;
+    const key = `${selectedRepo.owner.login}/${selectedRepo.name}@${selectedBranch}`;
+    if (treeLoadedFor === key && tree.length > 0) return;
+    setTreeLoading(true);
+    try {
+      const result = await github.contents.tree(
+        selectedAccountId,
+        selectedRepo.owner.login,
+        selectedRepo.name,
+        selectedBranch || undefined,
+      );
+      setTree(result.tree);
+      setTreeLoadedFor(key);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to load file tree.');
+    } finally {
+      setTreeLoading(false);
+    }
+  }, [selectedAccountId, selectedRepo, selectedBranch, treeLoadedFor, tree.length]);
+
+  useEffect(() => {
+    setTree([]);
+    setTreeLoadedFor(null);
+  }, [selectedRepo?.id, selectedBranch]);
+
+  useEffect(() => {
+    if (searchQuery.trim().length > 0) loadTree();
+  }, [searchQuery, loadTree]);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
+        setSearchOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const searchResults = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return [];
+    return tree
+      .filter((entry) => entry.path.toLowerCase().includes(q))
+      .sort((a, b) => {
+        const aName = a.path.split('/').pop() || '';
+        const bName = b.path.split('/').pop() || '';
+        const aStarts = aName.toLowerCase().startsWith(q) ? 0 : 1;
+        const bStarts = bName.toLowerCase().startsWith(q) ? 0 : 1;
+        if (aStarts !== bStarts) return aStarts - bStarts;
+        if (a.type !== b.type) return a.type === 'tree' ? -1 : 1;
+        return a.path.localeCompare(b.path);
+      })
+      .slice(0, 50);
+  }, [searchQuery, tree]);
+
+  const handleSearchResultClick = async (entry: TreeEntry) => {
+    setSearchOpen(false);
+    setSearchQuery('');
+
+    if (entry.type === 'tree') {
+      setFilePath(entry.path);
+      return;
+    }
+
+    const parentPath = entry.path.includes('/')
+      ? entry.path.substring(0, entry.path.lastIndexOf('/'))
+      : '';
+    setFilePath(parentPath);
+
+    if (!selectedAccountId || !selectedRepo) return;
+    try {
+      const file = await github.contents.getFile(
+        selectedAccountId,
+        selectedRepo.owner.login,
+        selectedRepo.name,
+        entry.path,
+        selectedBranch || undefined,
+      );
+      const decoded = file.content ? atob(file.content.replace(/\n/g, '')) : '';
+      setOpenedFile({ content: file, decoded });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to load file.');
+    }
+  };
 
   const handleDirClick = (item: GitHubContent) => {
     setFilePath(item.path);
@@ -230,7 +332,84 @@ export default function FileBrowser() {
 
   return (
     <div>
-      {/* Path breadcrumb + actions */}
+      <div ref={searchContainerRef} className="relative mb-4">
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground pointer-events-none" />
+          <Input
+            placeholder="Search files and folders…"
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setSearchOpen(true);
+            }}
+            onFocus={() => setSearchOpen(true)}
+            className="pl-8 pr-8 h-9"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => {
+                setSearchQuery('');
+                setSearchOpen(false);
+              }}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              <X className="size-3.5" />
+            </button>
+          )}
+        </div>
+
+        {searchOpen && searchQuery.trim().length > 0 && (
+          <div className="absolute z-20 left-0 right-0 mt-1 rounded-md border bg-popover shadow-md overflow-hidden">
+            {treeLoading ? (
+              <div className="flex items-center gap-2 px-3 py-2.5 text-sm text-muted-foreground">
+                <Loader2 className="size-3.5 animate-spin" />
+                Loading file tree…
+              </div>
+            ) : searchResults.length === 0 ? (
+              <div className="px-3 py-2.5 text-sm text-muted-foreground">
+                No matches for &ldquo;{searchQuery}&rdquo;
+              </div>
+            ) : (
+              <ul className="max-h-80 overflow-y-auto py-1">
+                {searchResults.map((entry) => {
+                  const name = entry.path.split('/').pop() || entry.path;
+                  const dir = entry.path.includes('/')
+                    ? entry.path.substring(0, entry.path.lastIndexOf('/'))
+                    : '';
+                  return (
+                    <li key={`${entry.type}:${entry.path}`}>
+                      <button
+                        onClick={() => handleSearchResultClick(entry)}
+                        className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-accent transition-colors"
+                      >
+                        {entry.type === 'tree' ? (
+                          <Folder className="size-3.5 text-muted-foreground shrink-0" />
+                        ) : (
+                          getFileIcon(name)
+                        )}
+                        <span className="flex-1 min-w-0 flex items-baseline gap-1.5">
+                          <span className="font-mono text-xs truncate">{name}</span>
+                          {dir && (
+                            <span className="text-[10px] text-muted-foreground truncate">
+                              {dir}
+                            </span>
+                          )}
+                        </span>
+                        {entry.type === 'blob' && entry.size !== undefined && (
+                          <span className="text-[10px] text-muted-foreground shrink-0">
+                            {formatSize(entry.size)}
+                          </span>
+                        )}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        )}
+      </div>
+
       <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-4">
         <Breadcrumb className="flex-1">
           <BreadcrumbList>
@@ -281,7 +460,6 @@ export default function FileBrowser() {
         </div>
       </div>
 
-      {/* File table */}
       {loading ? (
         <div className="space-y-2">
           {Array.from({ length: 8 }).map((_, i) => (
@@ -339,8 +517,8 @@ export default function FileBrowser() {
                         : <Download className="size-3.5" />}
                     </button>
                     <button
-                       onClick={(e) => { e.stopPropagation(); setDeleteTarget(item); }}
-                       disabled={!hasPushAccess}
+                      onClick={(e) => { e.stopPropagation(); setDeleteTarget(item); }}
+                      disabled={!hasPushAccess}
                       className="text-muted-foreground hover:text-destructive"
                       title={item.type === 'dir' ? 'Delete folder' : 'Delete file'}
                     >
@@ -354,7 +532,6 @@ export default function FileBrowser() {
         </Table>
       )}
 
-      {/* Push / Pull dialogs */}
       <PushFolderDialog
         open={pushOpen}
         onOpenChange={setPushOpen}
@@ -362,7 +539,6 @@ export default function FileBrowser() {
       />
       <PullDialog open={pullOpen} onOpenChange={setPullOpen} />
 
-      {/* Delete confirmation */}
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && !deleting && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -406,7 +582,6 @@ export default function FileBrowser() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* New file dialog */}
       <Dialog open={newFileOpen} onOpenChange={setNewFileOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
