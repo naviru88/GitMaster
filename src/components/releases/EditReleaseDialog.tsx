@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Loader2 } from 'lucide-react';
+import { Loader2, AlertCircle } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -29,31 +29,65 @@ export default function EditReleaseDialog({
   onOpenChange,
   onSaved,
 }: EditReleaseDialogProps) {
+  const [version, setVersion] = useState('');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [published, setPublished] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [versionError, setVersionError] = useState<string | null>(null);
 
   useEffect(() => {
     if (release) {
+      setVersion(release.version);
       setTitle(release.title ?? '');
       setDescription(release.description ?? '');
       setPublished(release.published);
       setSubmitting(false);
+      setVersionError(null);
     }
   }, [release]);
 
+  // Live validation of the version field (client-side mirror of server rules).
+  useEffect(() => {
+    if (!release) return;
+    if (version.trim() === release.version) {
+      setVersionError(null);
+      return;
+    }
+    // Very light client-side validation; the server is the source of truth.
+    const trimmed = version.trim();
+    if (trimmed.length === 0) {
+      setVersionError('Version cannot be empty');
+      return;
+    }
+    if (!/^v?\d+(\.\d+)?(\.\d+)?$/.test(trimmed)) {
+      setVersionError('Expected "v1", "v1.0", or "v1.0.1"');
+      return;
+    }
+    setVersionError(null);
+  }, [version, release]);
+
   const open = release !== null;
+  const versionChanged = release !== null && version.trim() !== release.version;
+
   const handleSubmit = async () => {
     if (!release) return;
+    if (versionError) {
+      toast.error(versionError);
+      return;
+    }
     setSubmitting(true);
     try {
-      await releasesApi.update(release.id, {
+      const payload: Parameters<typeof releasesApi.update>[1] = {
         title: title.trim() || null,
         description: description.trim() || null,
         published,
-      });
-      toast.success(`Updated ${release.version}`);
+      };
+      if (versionChanged) {
+        payload.version = version.trim();
+      }
+      await releasesApi.update(release.id, payload);
+      toast.success(`Updated ${versionChanged ? version.trim() : release.version}`);
       onSaved();
       onOpenChange(false);
     } catch (err) {
@@ -69,12 +103,35 @@ export default function EditReleaseDialog({
         <DialogHeader>
           <DialogTitle>Edit {release?.version}</DialogTitle>
           <DialogDescription>
-            The version string can't be changed here — delete and recreate to
-            move a release to a different version.
+            Change the version label within the same level and parent, or
+            update the title, description, and publish state.
           </DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col gap-4 py-2">
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="edit-version">Version</Label>
+            <Input
+              id="edit-version"
+              value={version}
+              onChange={(e) => setVersion(e.target.value)}
+              disabled={submitting}
+              className={versionError ? 'border-destructive' : ''}
+              placeholder="v1.0.1"
+            />
+            {versionError ? (
+              <p className="text-xs text-destructive flex items-center gap-1">
+                <AlertCircle className="size-3" />
+                {versionError}
+              </p>
+            ) : versionChanged ? (
+              <p className="text-xs text-muted-foreground">
+                The version can only be renamed within the same level and parent —
+                the server will reject structural changes.
+              </p>
+            ) : null}
+          </div>
+
           <div className="flex flex-col gap-2">
             <Label htmlFor="edit-title">
               Title <span className="text-muted-foreground">(optional)</span>
@@ -123,7 +180,7 @@ export default function EditReleaseDialog({
           >
             Cancel
           </Button>
-          <Button onClick={handleSubmit} disabled={submitting}>
+          <Button onClick={handleSubmit} disabled={submitting || !!versionError}>
             {submitting ? (
               <>
                 <Loader2 className="size-4 animate-spin" />
