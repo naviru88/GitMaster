@@ -15,6 +15,7 @@ import {
   Loader2,
   Search,
   X,
+  FolderInput,
 } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 import { github } from '@/services/api';
@@ -23,6 +24,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import PushFolderDialog from './PushFolderDialog';
 import PullDialog from './PullDialog';
+import MoveEntryDialog from './MoveEntryDialog';
 import {
   Table,
   TableBody,
@@ -105,6 +107,7 @@ export default function FileBrowser() {
   const [deleting, setDeleting] = useState(false);
   const [deleteProgress, setDeleteProgress] = useState<{ done: number; total: number } | null>(null);
   const [downloadingPath, setDownloadingPath] = useState<string | null>(null);
+  const [moveTarget, setMoveTarget] = useState<GitHubContent | null>(null);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
@@ -517,6 +520,14 @@ export default function FileBrowser() {
                         : <Download className="size-3.5" />}
                     </button>
                     <button
+                      onClick={(e) => { e.stopPropagation(); setMoveTarget(item); }}
+                      disabled={!hasPushAccess}
+                      className="text-muted-foreground hover:text-foreground"
+                      title={item.type === 'dir' ? 'Move folder' : 'Move file'}
+                    >
+                      <FolderInput className="size-3.5" />
+                    </button>
+                    <button
                       onClick={(e) => { e.stopPropagation(); setDeleteTarget(item); }}
                       disabled={!hasPushAccess}
                       className="text-muted-foreground hover:text-destructive"
@@ -538,6 +549,12 @@ export default function FileBrowser() {
         onSuccess={() => fetchContents(filePath)}
       />
       <PullDialog open={pullOpen} onOpenChange={setPullOpen} />
+
+      <MoveEntryDialog
+        entry={moveTarget}
+        onOpenChange={(v) => !v && setMoveTarget(null)}
+        onMoved={() => fetchContents(filePath)}
+      />
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && !deleting && setDeleteTarget(null)}>
         <AlertDialogContent>

@@ -181,6 +181,20 @@ export const github = {
         branch: string;
       }>(`/github/tree?${params.toString()}`);
     },
+    move: (
+      accountId: string,
+      owner: string,
+      repo: string,
+      branch: string,
+      fromPath: string,
+      toPath: string,
+      isDirectory: boolean,
+      message?: string,
+    ) =>
+      post<{ success: boolean; sha: string; filesMoved: number }>(
+        `/github/move?accountId=${accountId}`,
+        { owner, repo, branch, fromPath, toPath, isDirectory, message },
+      ),
   },
 
   branches: {

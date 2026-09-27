@@ -808,3 +808,181 @@ export async function getRepoTree(
     branch: ref!,
   };
 }
+
+export interface MoveEntryOptions {
+  owner: string;
+  repo: string;
+  branch: string;
+  fromPath: string;
+  toPath: string;
+  isDirectory: boolean;
+  message?: string;
+}
+
+export interface MoveEntryResult {
+  success: boolean;
+  sha: string;
+  filesMoved: number;
+}
+
+interface GitTreeItem {
+  path: string;
+  mode: '100644' | '100755' | '040000' | '160000' | '120000';
+  type: 'blob' | 'tree' | 'commit';
+  sha: string | null;
+}
+
+function ghHeaders(token: string | undefined): HeadersInit {
+  const h: HeadersInit = {
+    Accept: 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+    'Content-Type': 'application/json',
+  };
+  if (token) (h as Record<string, string>).Authorization = `Bearer ${token}`;
+  return h;
+}
+
+async function ghJson<T>(
+  token: string | undefined,
+  url: string,
+  init?: RequestInit,
+): Promise<T> {
+  const res = await fetch(url, { ...init, headers: { ...ghHeaders(token), ...(init?.headers || {}) } });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body?.message || `GitHub returned ${res.status}`);
+  }
+  return body as T;
+}
+
+export async function moveEntry(
+  token: string | undefined,
+  options: MoveEntryOptions,
+): Promise<MoveEntryResult> {
+  const { owner, repo, branch, fromPath, toPath, isDirectory, message } = options;
+
+  const refData = await ghJson<{ object: { sha: string } }>(
+    token,
+    `https://api.github.com/repos/${owner}/${repo}/git/refs/heads/${encodeURIComponent(branch)}`,
+  );
+  const headSha = refData.object.sha;
+
+  const commitData = await ghJson<{ tree: { sha: string } }>(
+    token,
+    `https://api.github.com/repos/${owner}/${repo}/git/commits/${headSha}`,
+  );
+  const baseTreeSha = commitData.tree.sha;
+
+  const treeData = await ghJson<{
+    tree: { path: string; mode: string; type: string; sha: string; size?: number }[];
+    truncated: boolean;
+  }>(
+    token,
+    `https://api.github.com/repos/${owner}/${repo}/git/trees/${baseTreeSha}?recursive=1`,
+  );
+
+  if (treeData.truncated) {
+    throw new Error('Repository tree is too large to move files atomically.');
+  }
+
+  const newItems: GitTreeItem[] = [];
+  let filesMoved = 0;
+
+  if (isDirectory) {
+    const prefix = fromPath.endsWith('/') ? fromPath : `${fromPath}/`;
+    const children = treeData.tree.filter((e) => e.type === 'blob' && e.path.startsWith(prefix));
+
+    if (children.length === 0) {
+      throw new Error('Folder is empty or does not exist.');
+    }
+
+    for (const child of children) {
+      const relativePath = child.path.slice(prefix.length);
+      const newPath = `${toPath}/${relativePath}`;
+      const mode = (child.mode === '100755' ? '100755' : '100644') as GitTreeItem['mode'];
+
+      newItems.push({
+        path: newPath,
+        mode,
+        type: 'blob',
+        sha: child.sha,
+      });
+
+      newItems.push({
+        path: child.path,
+        mode,
+        type: 'blob',
+        sha: null,
+      });
+
+      filesMoved++;
+    }
+  } else {
+    const file = treeData.tree.find((e) => e.path === fromPath && e.type === 'blob');
+    if (!file) {
+      throw new Error('File not found.');
+    }
+
+    const mode = (file.mode === '100755' ? '100755' : '100644') as GitTreeItem['mode'];
+
+    newItems.push({
+      path: toPath,
+      mode,
+      type: 'blob',
+      sha: file.sha,
+    });
+
+    newItems.push({
+      path: fromPath,
+      mode,
+      type: 'blob',
+      sha: null,
+    });
+
+    filesMoved = 1;
+  }
+
+  const newTree = await ghJson<{ sha: string }>(
+    token,
+    `https://api.github.com/repos/${owner}/${repo}/git/trees`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        base_tree: baseTreeSha,
+        tree: newItems,
+      }),
+    },
+  );
+
+  const defaultMsg = isDirectory
+    ? `Move ${fromPath}/ to ${toPath}/`
+    : `Rename ${fromPath} to ${toPath}`;
+
+  const newCommit = await ghJson<{ sha: string }>(
+    token,
+    `https://api.github.com/repos/${owner}/${repo}/git/commits`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        message: message || defaultMsg,
+        tree: newTree.sha,
+        parents: [headSha],
+      }),
+    },
+  );
+
+  await ghJson(
+    token,
+    `https://api.github.com/repos/${owner}/${repo}/git/refs/heads/${encodeURIComponent(branch)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ sha: newCommit.sha, force: false }),
+    },
+  );
+
+  return {
+    success: true,
+    sha: newCommit.sha,
+    filesMoved,
+  };
+}
