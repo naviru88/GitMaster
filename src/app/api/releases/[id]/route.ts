@@ -34,7 +34,7 @@ export async function GET(
   return NextResponse.json(release);
 }
 
-// PATCH
+// PATCH (also exposed as PUT for clients that send PUT)
 interface UpdateReleaseBody {
   version?: unknown;
   title?: unknown;
@@ -61,7 +61,14 @@ export async function PATCH(
 
   const existing = await prisma.release.findUnique({
     where: { id },
-    select: { id: true, projectId: true, version: true },
+    select: {
+      id: true,
+      projectId: true,
+      version: true,
+      level: true,
+      parentId: true,
+      _count: { select: { children: true } },
+    },
   });
 
   if (!existing) {
@@ -73,7 +80,7 @@ export async function PATCH(
 
   const data: Prisma.ReleaseUpdateInput = {};
 
-  // version (rare — usually immutable after creation)
+  // version — safe rename within the same level + parent
   if (body.version !== undefined) {
     if (typeof body.version !== "string") {
       return NextResponse.json(
@@ -87,62 +94,85 @@ export async function PATCH(
       parsed = parseVersion(body.version);
     } catch (e) {
       if (e instanceof VersionError) {
-        return NextResponse.json(
-          { error: e.message },
-          { status: 400 },
-        );
+        return NextResponse.json({ error: e.message }, { status: 400 });
       }
       throw e;
     }
 
-    // Check uniqueness within project
-    const collision = await prisma.release.findFirst({
-      where: {
-        projectId: existing.projectId,
-        version: parsed.version,
-        NOT: { id },
-      },
-      select: { id: true },
-    });
-
-    if (collision) {
-      return NextResponse.json(
-        { error: `Version ${parsed.version} already exists` },
-        { status: 409 },
-      );
-    }
-
-    data.version = parsed.version;
-    data.level = parsed.level as ReleaseLevel;
-
-    // Resolve parent
-    if (parsed.parentVersion === null) {
-      data.parent = { disconnect: true };
+    // No-op rename: nothing to validate, just leave it out of `data`.
+    if (parsed.version === existing.version) {
+      // fall through — other fields still update
     } else {
-      const parent = await prisma.release.findUnique({
-        where: {
-          projectId_version: {
-            projectId: existing.projectId,
-            version: parsed.parentVersion,
+      // Rule 1: level must not change
+      if (parsed.level !== existing.level) {
+        return NextResponse.json(
+          {
+            error:
+              `Cannot change version from ${existing.version} (${existing.level}) ` +
+              `to ${parsed.version} (${parsed.level}). Version level must stay the same — ` +
+              `delete and recreate this release if you need to change its level.`,
           },
+          { status: 400 },
+        );
+      }
+
+      // Rule 2: parent must stay the same
+      // Resolve the current parent's version (or null).
+      let currentParentVersion: string | null = null;
+      if (existing.parentId) {
+        const currentParent = await prisma.release.findUnique({
+          where: { id: existing.parentId },
+          select: { version: true },
+        });
+        currentParentVersion = currentParent?.version ?? null;
+      }
+
+      if (parsed.parentVersion !== currentParentVersion) {
+        return NextResponse.json(
+          {
+            error:
+              `Cannot move ${existing.version} under a different parent. ` +
+              `It currently belongs to ${currentParentVersion ?? "(no parent)"}, ` +
+              `but ${parsed.version} would belong to ${parsed.parentVersion ?? "(no parent)"}. ` +
+              `Delete and recreate the release to restructure the tree.`,
+          },
+          { status: 400 },
+        );
+      }
+
+      // Rule 3: must not orphan existing children
+      if (existing._count.children > 0) {
+        return NextResponse.json(
+          {
+            error:
+              `Cannot rename ${existing.version} because it has ${existing._count.children} ` +
+              `child release(s) that reference it by version. ` +
+              `Rename or delete the children first.`,
+          },
+          { status: 409 },
+        );
+      }
+
+      // Rule 4: sibling collision
+      const collision = await prisma.release.findFirst({
+        where: {
+          projectId: existing.projectId,
+          version: parsed.version,
+          NOT: { id },
         },
         select: { id: true },
       });
 
-      if (!parent) {
+      if (collision) {
         return NextResponse.json(
-          { error: `Parent ${parsed.parentVersion} does not exist` },
-          { status: 400 },
-        );
-      }
-      if (parent.id === id) {
-        return NextResponse.json(
-          { error: "A release cannot be its own parent" },
-          { status: 400 },
+          { error: `Version ${parsed.version} already exists` },
+          { status: 409 },
         );
       }
 
-      data.parent = { connect: { id: parent.id } };
+      data.version = parsed.version;
+      data.level = parsed.level as ReleaseLevel;
+      // No parent change — parentId stays as-is.
     }
   }
 
@@ -239,6 +269,9 @@ export async function PATCH(
     );
   }
 }
+
+// Alias: the client sends PUT. Same handler.
+export const PUT = PATCH;
 
 // DELETE
 export async function DELETE(
