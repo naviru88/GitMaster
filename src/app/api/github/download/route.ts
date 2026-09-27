@@ -40,6 +40,42 @@ function createTarGz(entries: ArchiveEntry[]): Buffer {
   return gzipSync(Buffer.concat(chunks));
 }
 
+const MIME_BY_EXT: Record<string, string> = {
+  json: 'application/json',
+  js: 'application/javascript',
+  mjs: 'application/javascript',
+  cjs: 'application/javascript',
+  ts: 'application/typescript',
+  tsx: 'application/typescript',
+  jsx: 'application/javascript',
+  html: 'text/html',
+  htm: 'text/html',
+  css: 'text/css',
+  md: 'text/markdown',
+  mdx: 'text/markdown',
+  txt: 'text/plain',
+  csv: 'text/csv',
+  xml: 'application/xml',
+  yml: 'text/yaml',
+  yaml: 'text/yaml',
+  svg: 'image/svg+xml',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  ico: 'image/x-icon',
+  pdf: 'application/pdf',
+  zip: 'application/zip',
+  gz: 'application/gzip',
+  tar: 'application/x-tar',
+};
+
+function guessMime(filename: string): string {
+  const ext = filename.split('.').pop()?.toLowerCase() || '';
+  return MIME_BY_EXT[ext] || 'application/octet-stream';
+}
+
 export async function GET(req: NextRequest) {
   try {
     const user = await requireAuth(req);
@@ -57,44 +93,67 @@ export async function GET(req: NextRequest) {
     const token = account.token ? decrypt(account.token) : undefined;
 
     const item = await getFile(token, owner, repo, path, ref).catch(() => null);
-    let entries: ArchiveEntry[] = [];
-    let filename = path.split('/').pop() || 'download';
+    const filename = path.split('/').pop() || 'download';
 
+    // ------------------------------------------------------------------
+    // Single-file download — return raw bytes, NOT a tar.gz archive.
+    // ------------------------------------------------------------------
     if (item && !Array.isArray(item) && item.type === 'file') {
       if (item.content === undefined) {
-        return NextResponse.json({ error: 'This file is too large to download through the API.' }, { status: 413 });
+        return NextResponse.json(
+          { error: 'This file is too large to download through the API.' },
+          { status: 413 },
+        );
       }
-      entries = [{ path: item.name, content: Buffer.from(item.content.replace(/\n/g, ''), 'base64') }];
-    } else {
-      const collect = async (folder: string, prefix: string) => {
-        const children = await getContents(token, owner, repo, folder, ref);
-        for (const child of children) {
-          const archivePath = prefix ? `${prefix}/${child.name}` : child.name;
-          if (child.type === 'dir') {
-            await collect(child.path, archivePath);
-          } else {
-            const file = await getFile(token, owner, repo, child.path, ref);
-            if (!Array.isArray(file) && file.content !== undefined) {
-              entries.push({
-                path: archivePath,
-                content: Buffer.from(file.content.replace(/\n/g, ''), 'base64'),
-              });
-            }
+      const bytes = Buffer.from(item.content.replace(/\n/g, ''), 'base64');
+      const contentType = guessMime(filename);
+      // Safe filename for the Content-Disposition header (quote-escape).
+      const safeName = filename.replace(/["\\]/g, '_');
+      return new NextResponse(new Uint8Array(bytes), {
+        headers: {
+          'Content-Type': contentType,
+          'Content-Length': String(bytes.length),
+          'Content-Disposition': `attachment; filename="${safeName}"`,
+          'Cache-Control': 'no-store',
+        },
+      });
+    }
+
+    // ------------------------------------------------------------------
+    // Folder download — build the tar.gz as before.
+    // ------------------------------------------------------------------
+    const entries: ArchiveEntry[] = [];
+    const collect = async (folder: string, prefix: string) => {
+      const children = await getContents(token, owner, repo, folder, ref);
+      for (const child of children) {
+        const archivePath = prefix ? `${prefix}/${child.name}` : child.name;
+        if (child.type === 'dir') {
+          await collect(child.path, archivePath);
+        } else {
+          const file = await getFile(token, owner, repo, child.path, ref);
+          if (!Array.isArray(file) && file.content !== undefined) {
+            entries.push({
+              path: archivePath,
+              content: Buffer.from(file.content.replace(/\n/g, ''), 'base64'),
+            });
           }
         }
-      };
-      await collect(path, filename);
-      filename = `${filename}.tar.gz`;
-    }
+      }
+    };
+    await collect(path, filename);
 
     if (entries.length === 0) {
       return NextResponse.json({ error: 'No downloadable files found.' }, { status: 404 });
     }
+
     const archive = createTarGz(entries);
+    const safeName = `${filename}.tar.gz`.replace(/["\\]/g, '_');
     return new NextResponse(new Uint8Array(archive), {
       headers: {
         'Content-Type': 'application/gzip',
-        'Content-Disposition': `attachment; filename="${filename}"`,
+        'Content-Length': String(archive.length),
+        'Content-Disposition': `attachment; filename="${safeName}"`,
+        'Cache-Control': 'no-store',
       },
     });
   } catch (err: unknown) {
