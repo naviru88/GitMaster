@@ -25,6 +25,7 @@ interface FolderPickerProps {
   excludePaths?: string[];
   allowCreate?: boolean;
   onFolderCreated?: (path: string) => void;
+  enabled?: boolean;
 }
 
 function buildFolderTree(flatPaths: string[]): FolderNode[] {
@@ -142,6 +143,7 @@ export default function FolderPicker({
   excludePaths = [],
   allowCreate = true,
   onFolderCreated,
+  enabled = true,
 }: FolderPickerProps) {
   const [folders, setFolders] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -177,10 +179,12 @@ export default function FolderPicker({
   };
 
   useEffect(() => {
+    if (!enabled) return;
+    if (!accountId || !owner || !repo) return;
     const cancel = reload();
     return cancel;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accountId, owner, repo, branch]);
+  }, [accountId, owner, repo, branch, enabled]);
 
   const tree = useMemo(() => buildFolderTree(folders), [folders]);
 
@@ -252,6 +256,14 @@ export default function FolderPicker({
       setCreating(false);
     }
   };
+
+  if (!enabled) {
+    return (
+      <div className="text-xs text-muted-foreground px-3 py-4 text-center">
+        Loading folders…
+      </div>
+    );
+  }
 
   const renderInlineCreator = (parentPath: string, depth: number) => (
     <div

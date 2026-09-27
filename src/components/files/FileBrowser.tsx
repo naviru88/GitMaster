@@ -16,6 +16,7 @@ import {
   Search,
   X,
   FolderInput,
+  FolderPlus,
 } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 import { github } from '@/services/api';
@@ -25,6 +26,7 @@ import { Input } from '@/components/ui/input';
 import PushFolderDialog from './PushFolderDialog';
 import PullDialog from './PullDialog';
 import MoveEntryDialog from './MoveEntryDialog';
+import FolderPicker from './FolderPicker';
 import {
   Table,
   TableBody,
@@ -108,6 +110,11 @@ export default function FileBrowser() {
   const [deleteProgress, setDeleteProgress] = useState<{ done: number; total: number } | null>(null);
   const [downloadingPath, setDownloadingPath] = useState<string | null>(null);
   const [moveTarget, setMoveTarget] = useState<GitHubContent | null>(null);
+
+  const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [newFolderParent, setNewFolderParent] = useState('');
+  const [newFolderName, setNewFolderName] = useState('');
+  const [creatingFolder, setCreatingFolder] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
@@ -291,6 +298,40 @@ export default function FileBrowser() {
     setNewFileOpen(false);
   };
 
+  const handleCreateFolder = async () => {
+    if (!selectedAccountId || !selectedRepo) return;
+    const name = newFolderName.trim();
+    if (!name) return;
+    if (name.includes('/') || name.includes('\\')) {
+      toast.error('Folder name cannot contain slashes');
+      return;
+    }
+    const newPath = newFolderParent ? `${newFolderParent}/${name}` : name;
+    setCreatingFolder(true);
+    try {
+      await github.contents.saveFile(
+        selectedAccountId,
+        selectedRepo.owner.login,
+        selectedRepo.name,
+        `${newPath}/.gitkeep`,
+        '',
+        `Create folder ${newPath}`,
+        undefined,
+        selectedBranch || undefined,
+        false,
+      );
+      toast.success(`Created folder ${newPath}`);
+      setNewFolderOpen(false);
+      setNewFolderName('');
+      setNewFolderParent('');
+      fetchContents(filePath);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to create folder.');
+    } finally {
+      setCreatingFolder(false);
+    }
+  };
+
   const handleDeleteConfirm = async () => {
     if (!deleteTarget || !selectedAccountId || !selectedRepo) return;
     setDeleting(true);
@@ -460,6 +501,19 @@ export default function FileBrowser() {
             <Plus className="size-3.5" />
             New File
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            onClick={() => {
+              setNewFolderParent(filePath);
+              setNewFolderOpen(true);
+            }}
+            disabled={!hasPushAccess}
+          >
+            <FolderPlus className="size-3.5" />
+            New Folder
+          </Button>
         </div>
       </div>
 
@@ -550,11 +604,13 @@ export default function FileBrowser() {
       />
       <PullDialog open={pullOpen} onOpenChange={setPullOpen} />
 
-      <MoveEntryDialog
-        entry={moveTarget}
-        onOpenChange={(v) => !v && setMoveTarget(null)}
-        onMoved={() => fetchContents(filePath)}
-      />
+      {moveTarget !== null && (
+        <MoveEntryDialog
+          entry={moveTarget}
+          onOpenChange={(v) => !v && setMoveTarget(null)}
+          onMoved={() => fetchContents(filePath)}
+        />
+      )}
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && !deleting && setDeleteTarget(null)}>
         <AlertDialogContent>
@@ -626,6 +682,80 @@ export default function FileBrowser() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {newFolderOpen && (
+        <Dialog
+          open={newFolderOpen}
+          onOpenChange={(v) => !creatingFolder && setNewFolderOpen(v)}
+        >
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <FolderPlus className="size-4" />
+                New Folder
+              </DialogTitle>
+            </DialogHeader>
+
+            <div className="flex flex-col gap-3 py-2">
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="new-folder-name">Folder name</Label>
+                <Input
+                  id="new-folder-name"
+                  placeholder="my-folder"
+                  value={newFolderName}
+                  onChange={(e) => setNewFolderName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && newFolderName.trim() && !creatingFolder) {
+                      handleCreateFolder();
+                    }
+                  }}
+                  autoFocus
+                  disabled={creatingFolder}
+                />
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <Label>Create inside</Label>
+                <FolderPicker
+                  accountId={selectedAccountId || ''}
+                  owner={selectedRepo?.owner.login || ''}
+                  repo={selectedRepo?.name || ''}
+                  branch={selectedBranch || undefined}
+                  selected={newFolderParent}
+                  onSelect={setNewFolderParent}
+                  allowCreate={false}
+                  enabled={newFolderOpen}
+                />
+              </div>
+
+              <div className="rounded-md border bg-muted/40 px-3 py-2">
+                <p className="text-xs text-muted-foreground mb-0.5">Will create</p>
+                <code className="font-mono text-xs break-all">
+                  {newFolderParent ? `${newFolderParent}/${newFolderName || '…'}` : newFolderName || '…'}
+                </code>
+              </div>
+            </div>
+
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setNewFolderOpen(false)}
+                disabled={creatingFolder}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleCreateFolder}
+                disabled={creatingFolder || !newFolderName.trim()}
+                className="gap-1.5"
+              >
+                {creatingFolder ? <Loader2 className="size-3.5 animate-spin" /> : <FolderPlus className="size-3.5" />}
+                {creatingFolder ? 'Creating…' : 'Create Folder'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }

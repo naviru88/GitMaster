@@ -135,12 +135,9 @@ export default function MoveEntryDialog({
               branch={selectedBranch || undefined}
               selected={destinationFolder}
               onSelect={setDestinationFolder}
-              excludePaths={
-                entry?.type === 'dir'
-                  ? [entry.path]
-                  : []
-              }
+              excludePaths={entry?.type === 'dir' ? [entry.path] : []}
               allowCreate
+              enabled={open}
             />
           </div>
 
