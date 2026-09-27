@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { ChevronRight, ChevronDown, Folder, Loader2, Home, FolderPlus, Check, X } from 'lucide-react';
+import { ChevronRight, ChevronDown, Folder, Loader2, Home, FolderPlus, Check, X, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { github } from '@/services/api';
 import { Button } from '@/components/ui/button';
@@ -154,6 +154,8 @@ export default function FolderPicker({
   const [newFolderName, setNewFolderName] = useState('');
   const [creating, setCreating] = useState(false);
 
+  const [query, setQuery] = useState('');
+
   const reload = () => {
     let cancelled = false;
     setLoading(true);
@@ -187,6 +189,27 @@ export default function FolderPicker({
   }, [accountId, owner, repo, branch, enabled]);
 
   const tree = useMemo(() => buildFolderTree(folders), [folders]);
+
+  const isExcluded = (path: string) =>
+    excludePaths.some((p) => path === p || path.startsWith(p + '/'));
+
+  const searchResults = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    return folders
+      .filter((p) => !isExcluded(p))
+      .filter((p) => p.toLowerCase().includes(q))
+      .sort((a, b) => {
+        const aName = a.split('/').pop() || a;
+        const bName = b.split('/').pop() || b;
+        const aStarts = aName.toLowerCase().startsWith(q) ? 0 : 1;
+        const bStarts = bName.toLowerCase().startsWith(q) ? 0 : 1;
+        if (aStarts !== bStarts) return aStarts - bStarts;
+        return a.localeCompare(b);
+      })
+      .slice(0, 100);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, folders, excludePaths]);
 
   const toggle = (path: string) => {
     setExpanded((prev) => {
@@ -322,18 +345,42 @@ export default function FolderPicker({
     );
   }
 
+  const isSearching = query.trim().length > 0;
+
   return (
     <div className="flex flex-col gap-1">
+      {/* Search input */}
+      <div className="relative pb-1">
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground pointer-events-none" />
+        <Input
+          placeholder="Search folders…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          className="pl-8 pr-8 h-8 text-xs"
+        />
+        {query && (
+          <button
+            onClick={() => setQuery('')}
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            title="Clear search"
+          >
+            <X className="size-3.5" />
+          </button>
+        )}
+      </div>
+
       {allowCreate && (
         <div className="flex items-center justify-between pb-1">
-          <span className="text-xs text-muted-foreground">Folders</span>
+          <span className="text-xs text-muted-foreground">
+            {isSearching ? `${searchResults.length} match(es)` : 'Folders'}
+          </span>
           <Button
             type="button"
             variant="ghost"
             size="sm"
             className="h-6 px-2 text-xs gap-1"
             onClick={() => startCreating(selected || '')}
-            disabled={creatingIn !== null || creating}
+            disabled={creatingIn !== null || creating || isSearching}
           >
             <FolderPlus className="size-3" />
             New folder
@@ -341,21 +388,62 @@ export default function FolderPicker({
         </div>
       )}
 
-      <div
-        className={`flex items-center gap-1 px-2 py-1 rounded-sm text-sm cursor-pointer transition-colors ${
-          selected === '' ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-accent'
-        }`}
-        onClick={() => onSelect('')}
-      >
-        <span className="size-4 shrink-0" />
-        <Home className="size-3.5 text-muted-foreground shrink-0" />
-        <span className="truncate font-mono text-xs">/ (root)</span>
-      </div>
+      {/* Root option — hidden while searching */}
+      {!isSearching && (
+        <>
+          <div
+            className={`flex items-center gap-1 px-2 py-1 rounded-sm text-sm cursor-pointer transition-colors ${
+              selected === '' ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-accent'
+            }`}
+            onClick={() => onSelect('')}
+          >
+            <span className="size-4 shrink-0" />
+            <Home className="size-3.5 text-muted-foreground shrink-0" />
+            <span className="truncate font-mono text-xs">/ (root)</span>
+          </div>
 
-      {creatingIn === '' && renderInlineCreator('', 0)}
+          {creatingIn === '' && renderInlineCreator('', 0)}
+        </>
+      )}
 
       <ScrollArea className="max-h-64">
-        {tree.length === 0 ? (
+        {isSearching ? (
+          searchResults.length === 0 ? (
+            <p className="text-xs text-muted-foreground px-3 py-4 text-center">
+              No folders match &ldquo;{query}&rdquo;
+            </p>
+          ) : (
+            <div className="flex flex-col">
+              {searchResults.map((path) => {
+                const name = path.split('/').pop() || path;
+                const parent = path.includes('/')
+                  ? path.substring(0, path.lastIndexOf('/'))
+                  : '';
+                const isSelected = selected === path;
+                return (
+                  <div
+                    key={`search:${path}`}
+                    className={`flex items-center gap-2 px-2 py-1 rounded-sm text-sm cursor-pointer transition-colors ${
+                      isSelected ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-accent'
+                    }`}
+                    onClick={() => onSelect(path)}
+                    title={path}
+                  >
+                    <Folder className="size-3.5 text-muted-foreground shrink-0" />
+                    <span className="flex-1 min-w-0 flex items-baseline gap-1.5">
+                      <span className="font-mono text-xs truncate">{name}</span>
+                      {parent && (
+                        <span className="text-[10px] text-muted-foreground truncate">
+                          {parent}
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )
+        ) : tree.length === 0 ? (
           <p className="text-xs text-muted-foreground px-3 py-4 text-center">
             No subfolders in this repo.
           </p>
