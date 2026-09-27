@@ -860,21 +860,15 @@ export default function PushFolderDialog({ open, onOpenChange, onSuccess }: Push
               </div>
 
               {rawFiles.length === 0 && (
-                <label className="cursor-pointer">
-                  <input
-                    type="file"
-                    {...({ webkitdirectory: '', directory: '' } as Record<string, string>)}
-                    className="sr-only"
-                    onChange={handleFolderSelect}
-                    disabled={isProcessing || pushing}
-                  />
-                  <div className="flex flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed py-6 text-center hover:bg-accent/40 hover:border-primary/40 transition-colors">
-                    <UploadCloud className="size-5 text-muted-foreground" />
-                    <p className="text-xs text-muted-foreground">
-                      Drag and drop files or a folder here, or click to browse
-                    </p>
-                  </div>
-                </label>
+                <div className="flex flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed py-6 text-center">
+                  <UploadCloud className="size-5 text-muted-foreground" />
+                  <p className="text-xs text-muted-foreground">
+                    Drag and drop files or a folder here
+                  </p>
+                  <p className="text-[11px] text-muted-foreground/70">
+                    or use the Select Folder / Select Files buttons above
+                  </p>
+                </div>
               )}
 
               {(isProcessing || (processingDone > 0 && processingDone < processingQueue)) && (
