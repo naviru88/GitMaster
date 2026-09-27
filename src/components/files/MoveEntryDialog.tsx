@@ -140,6 +140,7 @@ export default function MoveEntryDialog({
                   ? [entry.path]
                   : []
               }
+              allowCreate
             />
           </div>
 

@@ -1,9 +1,11 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { ChevronRight, ChevronDown, Folder, Loader2, Home } from 'lucide-react';
+import { ChevronRight, ChevronDown, Folder, Loader2, Home, FolderPlus, Check, X } from 'lucide-react';
+import { toast } from 'sonner';
 import { github } from '@/services/api';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 
@@ -21,6 +23,8 @@ interface FolderPickerProps {
   selected: string;
   onSelect: (path: string) => void;
   excludePaths?: string[];
+  allowCreate?: boolean;
+  onFolderCreated?: (path: string) => void;
 }
 
 function buildFolderTree(flatPaths: string[]): FolderNode[] {
@@ -136,13 +140,19 @@ export default function FolderPicker({
   selected,
   onSelect,
   excludePaths = [],
+  allowCreate = true,
+  onFolderCreated,
 }: FolderPickerProps) {
   const [folders, setFolders] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
+  const [creatingIn, setCreatingIn] = useState<string | null>(null);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [creating, setCreating] = useState(false);
+
+  const reload = () => {
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -164,6 +174,12 @@ export default function FolderPicker({
     return () => {
       cancelled = true;
     };
+  };
+
+  useEffect(() => {
+    const cancel = reload();
+    return cancel;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accountId, owner, repo, branch]);
 
   const tree = useMemo(() => buildFolderTree(folders), [folders]);
@@ -176,6 +192,102 @@ export default function FolderPicker({
       return next;
     });
   };
+
+  const startCreating = (parentPath: string) => {
+    setCreatingIn(parentPath);
+    setNewFolderName('');
+    if (parentPath && !expanded.has(parentPath)) {
+      setExpanded((prev) => new Set(prev).add(parentPath));
+    }
+  };
+
+  const cancelCreating = () => {
+    setCreatingIn(null);
+    setNewFolderName('');
+  };
+
+  const commitCreate = async (parentPath: string) => {
+    const name = newFolderName.trim();
+    if (!name) {
+      cancelCreating();
+      return;
+    }
+    if (name.includes('/') || name.includes('\\')) {
+      toast.error('Folder name cannot contain slashes');
+      return;
+    }
+    if (name === '.' || name === '..') {
+      toast.error('Invalid folder name');
+      return;
+    }
+
+    const newPath = parentPath ? `${parentPath}/${name}` : name;
+    if (folders.includes(newPath)) {
+      toast.error(`Folder "${name}" already exists here`);
+      return;
+    }
+
+    setCreating(true);
+    try {
+      const placeholderPath = `${newPath}/.gitkeep`;
+      await github.contents.saveFile(
+        accountId,
+        owner,
+        repo,
+        placeholderPath,
+        '',
+        `Create folder ${newPath}`,
+        undefined,
+        branch,
+        false,
+      );
+      toast.success(`Created folder ${newPath}`);
+      onFolderCreated?.(newPath);
+      onSelect(newPath);
+      cancelCreating();
+      reload();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to create folder.');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const renderInlineCreator = (parentPath: string, depth: number) => (
+    <div
+      className="flex items-center gap-1 px-2 py-1 rounded-sm"
+      style={{ paddingLeft: `${depth * 14 + 8}px` }}
+    >
+      <span className="size-4 shrink-0" />
+      <Folder className="size-3.5 text-primary shrink-0" />
+      <Input
+        autoFocus
+        value={newFolderName}
+        onChange={(e) => setNewFolderName(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commitCreate(parentPath);
+          if (e.key === 'Escape') cancelCreating();
+        }}
+        placeholder="new-folder"
+        disabled={creating}
+        className="h-6 text-xs font-mono flex-1"
+      />
+      <button
+        onClick={() => commitCreate(parentPath)}
+        disabled={creating || !newFolderName.trim()}
+        className="text-green-600 hover:text-green-700 disabled:opacity-40 shrink-0"
+      >
+        {creating ? <Loader2 className="size-3 animate-spin" /> : <Check className="size-3" />}
+      </button>
+      <button
+        onClick={cancelCreating}
+        disabled={creating}
+        className="text-muted-foreground hover:text-foreground shrink-0"
+      >
+        <X className="size-3" />
+      </button>
+    </div>
+  );
 
   if (loading) {
     return (
@@ -200,6 +312,23 @@ export default function FolderPicker({
 
   return (
     <div className="flex flex-col gap-1">
+      {allowCreate && (
+        <div className="flex items-center justify-between pb-1">
+          <span className="text-xs text-muted-foreground">Folders</span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-6 px-2 text-xs gap-1"
+            onClick={() => startCreating(selected || '')}
+            disabled={creatingIn !== null || creating}
+          >
+            <FolderPlus className="size-3" />
+            New folder
+          </Button>
+        </div>
+      )}
+
       <div
         className={`flex items-center gap-1 px-2 py-1 rounded-sm text-sm cursor-pointer transition-colors ${
           selected === '' ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-accent'
@@ -210,6 +339,9 @@ export default function FolderPicker({
         <Home className="size-3.5 text-muted-foreground shrink-0" />
         <span className="truncate font-mono text-xs">/ (root)</span>
       </div>
+
+      {creatingIn === '' && renderInlineCreator('', 0)}
+
       <ScrollArea className="max-h-64">
         {tree.length === 0 ? (
           <p className="text-xs text-muted-foreground px-3 py-4 text-center">
@@ -217,16 +349,18 @@ export default function FolderPicker({
           </p>
         ) : (
           tree.map((node) => (
-            <FolderRow
-              key={node.path}
-              node={node}
-              depth={0}
-              selected={selected}
-              onSelect={onSelect}
-              excludePaths={excludePaths}
-              expanded={expanded}
-              onToggle={toggle}
-            />
+            <React.Fragment key={node.path}>
+              <FolderRow
+                node={node}
+                depth={0}
+                selected={selected}
+                onSelect={onSelect}
+                excludePaths={excludePaths}
+                expanded={expanded}
+                onToggle={toggle}
+              />
+              {creatingIn === node.path && renderInlineCreator(node.path, 1)}
+            </React.Fragment>
           ))
         )}
       </ScrollArea>
