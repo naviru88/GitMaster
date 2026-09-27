@@ -16,9 +16,6 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "GitMaster — GitHub Repo Manager",
   description: "Manage your GitHub repositories, browse files, branches, and commits with AI-powered tools.",
-  icons: {
-    icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
-  },
 };
 
 export default function RootLayout({
