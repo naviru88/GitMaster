@@ -748,3 +748,63 @@ export async function fetchMergedPRs(
     return pr.merged_at >= fromDate && pr.merged_at <= toDate;
   });
 }
+
+export interface RepoTreeEntry {
+  path: string;
+  type: 'blob' | 'tree';
+  size?: number;
+}
+
+export interface RepoTreeResult {
+  tree: RepoTreeEntry[];
+  truncated: boolean;
+  branch: string;
+}
+
+export async function getRepoTree(
+  token: string | undefined,
+  owner: string,
+  repo: string,
+  branch?: string,
+): Promise<RepoTreeResult> {
+  const headers: HeadersInit = {
+    Accept: 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  let ref = branch;
+  if (!ref) {
+    const repoRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers });
+    if (!repoRes.ok) {
+      const body = await repoRes.json().catch(() => ({}));
+      throw new Error(body?.message || `GitHub returned ${repoRes.status}`);
+    }
+    const repoData = await repoRes.json();
+    ref = repoData.default_branch || 'main';
+  }
+
+  const url = `https://api.github.com/repos/${owner}/${repo}/git/trees/${encodeURIComponent(ref!)}?recursive=1`;
+  const res = await fetch(url, { headers });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.message || `GitHub returned ${res.status}`);
+  }
+
+  const data = await res.json();
+  const tree: RepoTreeEntry[] = Array.isArray(data.tree)
+    ? data.tree
+        .filter((entry: { type?: string }) => entry.type === 'blob' || entry.type === 'tree')
+        .map((entry: { path: string; type: 'blob' | 'tree'; size?: number }) => ({
+          path: entry.path,
+          type: entry.type,
+          size: entry.size,
+        }))
+    : [];
+
+  return {
+    tree,
+    truncated: Boolean(data.truncated),
+    branch: ref!,
+  };
+}

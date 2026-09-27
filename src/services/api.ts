@@ -172,6 +172,15 @@ export const github = {
       }
       return { deletedCount: files.length };
     },
+    tree: (accountId: string, owner: string, repo: string, branch?: string) => {
+      const params = new URLSearchParams({ accountId, owner, repo });
+      if (branch) params.set('branch', branch);
+      return get<{
+        tree: { path: string; type: 'blob' | 'tree'; size?: number }[];
+        truncated: boolean;
+        branch: string;
+      }>(`/github/tree?${params.toString()}`);
+    },
   },
 
   branches: {
